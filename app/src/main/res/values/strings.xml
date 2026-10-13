@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">NetPulse</string>
+    <string name="quick_settings_tile_label">NetPulse</string>
+    <string name="notification_channel_name">Network Speed Monitor</string>
+    <string name="notification_channel_desc">Persistent real-time network throughput display</string>
+    <string name="notification_title">NetPulse Active</string>
+    <string name="notification_initial_body">Waiting for network telemetry…</string>
+</resources>
