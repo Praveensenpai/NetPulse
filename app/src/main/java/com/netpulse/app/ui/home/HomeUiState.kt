@@ -10,5 +10,7 @@ data class HomeUiState(
     val uploadSpeed: FormattedSpeed = FormattedSpeed("0", "B/s"),
     val dailyUsage: DailyUsage = DailyUsage(""),
     val networkType: ActiveNetworkType = ActiveNetworkType.NONE,
-    val isBatteryOptimized: Boolean = false
+    val isBatteryOptimized: Boolean = false,
+    val hasNotificationPermission: Boolean = true,
+    val canDrawOverlays: Boolean = true
 )

@@ -14,6 +14,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.BatteryAlert
+import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -60,6 +61,18 @@ fun HomeScreen(
             UsageSummaryCard(dailyUsage = state.dailyUsage)
         }
 
+        if (!state.hasNotificationPermission) {
+            item(key = "notif_warning") {
+                PermissionNoticeCard(
+                    title = "Notification Permission Required",
+                    description = "Allow notifications to display real-time network speeds in your status bar.",
+                    actionLabel = "Enable Notifications",
+                    icon = Icons.Rounded.NotificationsActive,
+                    onAction = { onEvent(HomeEvent.RequestNotificationPermission) }
+                )
+            }
+        }
+
         if (state.isBatteryOptimized) {
             item(key = "battery_warning") {
                 BatteryNoticeCard(
@@ -73,6 +86,53 @@ fun HomeScreen(
                 isServiceEnabled = state.isServiceEnabled,
                 onToggle = { onEvent(HomeEvent.ToggleService(!state.isServiceEnabled)) }
             )
+        }
+    }
+}
+
+@Composable
+private fun PermissionNoticeCard(
+    title: String,
+    description: String,
+    actionLabel: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onAction: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(Dimens.cornerMd),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Column(modifier = Modifier.padding(Dimens.md)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(Dimens.iconSizeMd)
+                )
+                Spacer(modifier = Modifier.size(Dimens.sm))
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+            Spacer(modifier = Modifier.height(Dimens.xs))
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(Dimens.sm))
+            Button(
+                onClick = onAction,
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                shape = RoundedCornerShape(Dimens.cornerPill)
+            ) {
+                Text(text = actionLabel, style = MaterialTheme.typography.labelMedium)
+            }
         }
     }
 }

@@ -60,6 +60,16 @@ Kernel (/proc/net/dev) ──> TrafficDataSource ──> NetPulseService
   ```
 - **Consumers**: `HomeViewModel`, `BatteryGuideRoute`.
 
+### `com.netpulse.app.core.TelemetryManager` (Role: core, Lines: 19)
+- **Responsibility**: Process-wide singleton `StateFlow<SpeedSnapshot>` bridging service sampling to UI, avoiding duplicate sampling loops.
+- **Public Symbols**:
+  ```kotlin
+  val currentSpeed: StateFlow<SpeedSnapshot>
+  fun updateSpeed(snapshot: SpeedSnapshot)
+  fun reset()
+  ```
+- **Consumers**: `NetPulseService`, `HomeViewModel`.
+
 ### `com.netpulse.app.core.NetworkMonitor` (Role: core, Lines: 65)
 - **Responsibility**: Observes network transports (Wi-Fi, Mobile) via `ConnectivityManager.NetworkCallback`.
 - **Public Functions**:
@@ -151,3 +161,4 @@ Kernel (/proc/net/dev) ──> TrafficDataSource ──> NetPulseService
 
 ## 6. Recent Iteration Changes
 - **2026-10-13**: Initialized complete NetPulse architecture (core, domain, data, service, Compose UI, unit tests, GitHub CI/Release workflows).
+- **2026-10-14**: v1.0.1 fix release. Added runtime `POST_NOTIFICATIONS` request (fixes dead notification/status-bar speed on Android 13+); R8 minify + resource shrink (42 MB -> 2.1 MB); stable release keystore (`keystore.properties` + GitHub secrets, fixes per-build dynamic debug key); `TelemetryManager` (core) decouples sampling from UI; `HomeUiState` gains `hasNotificationPermission`/`canDrawOverlays`; overlay permission prompt in `SettingsViewModel`.

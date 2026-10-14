@@ -44,16 +44,6 @@ class NetPulseApp : Application() {
         networkMonitor = NetworkMonitor(this)
 
         SpeedNotificationManager.createNotificationChannel(this)
-
-        applicationScope.launch {
-            val prefs = preferencesRepository.getPreferences()
-            if (prefs.isServiceEnabled) {
-                val intent = Intent(this@NetPulseApp, NetPulseService::class.java).apply {
-                    action = Constants.ACTION_START_SERVICE
-                }
-                startForegroundService(intent)
-            }
-        }
     }
 
     companion object {

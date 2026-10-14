@@ -10,3 +10,6 @@
 .cxx
 *.apk
 dist/
+keystore.properties
+*.jks
+*.keystore

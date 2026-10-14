@@ -127,30 +127,32 @@ class NetPulseService : Service() {
 
         pollingJob = serviceScope.launch {
             while (isActive) {
+                val snapshot = app.trafficDataSource.sample()
+                com.netpulse.app.core.TelemetryManager.updateSpeed(snapshot)
+
                 val conn = app.networkMonitor.getCurrentConnection()
-                if (conn.isConnected) {
-                    val snapshot = app.trafficDataSource.sample()
-
+                val totalDelta = snapshot.downloadBytesPerSec + snapshot.uploadBytesPerSec
+                if (totalDelta > 0) {
                     if (conn.type == ActiveNetworkType.WIFI) {
-                        app.usageRepository.recordUsage(0L, snapshot.downloadBytesPerSec + snapshot.uploadBytesPerSec)
+                        app.usageRepository.recordUsage(0L, totalDelta)
                     } else if (conn.type == ActiveNetworkType.MOBILE) {
-                        app.usageRepository.recordUsage(snapshot.downloadBytesPerSec + snapshot.uploadBytesPerSec, 0L)
+                        app.usageRepository.recordUsage(totalDelta, 0L)
                     }
+                }
 
-                    if (currentPreferences.showNotification) {
-                        val notif = notificationManager.buildNotification(
-                            speed = snapshot,
-                            usage = todayUsage,
-                            unitInBits = currentPreferences.unitInBits,
-                            showUpload = currentPreferences.showUploadSpeed,
-                            useDynamicIcon = currentPreferences.showStatusBarIcon
-                        )
-                        notificationManager.updateNotification(notif)
-                    }
+                if (currentPreferences.showNotification) {
+                    val notif = notificationManager.buildNotification(
+                        speed = snapshot,
+                        usage = todayUsage,
+                        unitInBits = currentPreferences.unitInBits,
+                        showUpload = currentPreferences.showUploadSpeed,
+                        useDynamicIcon = currentPreferences.showStatusBarIcon
+                    )
+                    notificationManager.updateNotification(notif)
+                }
 
-                    if (currentPreferences.showFloatingOverlay) {
-                        overlayManager.updateSpeed(snapshot, currentPreferences.unitInBits)
-                    }
+                if (currentPreferences.showFloatingOverlay) {
+                    overlayManager.updateSpeed(snapshot, currentPreferences.unitInBits)
                 }
 
                 delay(Constants.DEFAULT_REFRESH_INTERVAL_MS)
@@ -161,6 +163,7 @@ class NetPulseService : Service() {
     private fun stopMonitoring() {
         pollingJob?.cancel()
         pollingJob = null
+        com.netpulse.app.core.TelemetryManager.reset()
         overlayManager.hide()
     }
 

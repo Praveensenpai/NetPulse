@@ -1,6 +1,8 @@
 package com.netpulse.app.ui.settings
 
 import android.app.Application
+import android.content.Intent
+import android.net.Uri
 import android.provider.Settings
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -45,7 +47,18 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 is SettingsEvent.ToggleUnitInBits -> prefsRepo.setUnitInBits(event.inBits)
                 is SettingsEvent.TogglePauseScreenOff -> prefsRepo.setPauseWhenScreenOff(event.pause)
                 is SettingsEvent.ToggleStartOnBoot -> prefsRepo.setStartOnBoot(event.start)
-                is SettingsEvent.ToggleFloatingOverlay -> prefsRepo.setFloatingOverlayEnabled(event.enabled)
+                is SettingsEvent.ToggleFloatingOverlay -> {
+                    if (event.enabled && !Settings.canDrawOverlays(getApplication())) {
+                        val intent = Intent(
+                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:${getApplication<Application>().packageName}")
+                        ).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        getApplication<Application>().startActivity(intent)
+                    }
+                    prefsRepo.setFloatingOverlayEnabled(event.enabled)
+                }
             }
         }
     }
