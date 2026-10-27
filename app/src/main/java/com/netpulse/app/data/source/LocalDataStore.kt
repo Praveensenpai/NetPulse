@@ -7,10 +7,12 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.netpulse.app.core.Constants
 import com.netpulse.app.domain.model.DailyUsage
 import com.netpulse.app.domain.model.MeterPreferences
+import com.netpulse.app.domain.model.UsageLogEntry
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -33,6 +35,7 @@ class LocalDataStore(private val context: Context) {
         val START_ON_BOOT = booleanPreferencesKey("start_on_boot")
         val PAUSE_WHEN_SCREEN_OFF = booleanPreferencesKey("pause_when_screen_off")
         val OVERLAY_ALPHA = floatPreferencesKey("overlay_alpha")
+        val APP_USAGE_LOG = stringPreferencesKey("app_usage_log")
     }
 
     val meterPreferencesFlow: Flow<MeterPreferences> = context.preferencesDataStore.data.map { prefs ->
@@ -103,5 +106,43 @@ class LocalDataStore(private val context: Context) {
             prefs[mobileKey] = 0L
             prefs[wifiKey] = 0L
         }
+    }
+
+    fun observeAppUsageLog(): Flow<List<UsageLogEntry>> =
+        context.usageDataStore.data.map { prefs ->
+            decodeUsageLog(prefs[PrefKeys.APP_USAGE_LOG] ?: "")
+        }
+
+    suspend fun saveAppUsageLog(entries: List<UsageLogEntry>) {
+        val encoded = encodeUsageLog(entries)
+        context.usageDataStore.edit { prefs ->
+            prefs[PrefKeys.APP_USAGE_LOG] = encoded
+        }
+    }
+
+    private fun encodeUsageLog(entries: List<UsageLogEntry>): String =
+        entries.joinToString(separator = "\n") { entry ->
+            listOf(
+                entry.minuteMs,
+                entry.packageName,
+                entry.label.replace('|', ' '),
+                entry.bytes
+            ).joinToString(separator = "|")
+        }
+
+    private fun decodeUsageLog(raw: String): List<UsageLogEntry> {
+        if (raw.isEmpty()) return emptyList()
+        return raw.lineSequence().mapNotNull { line ->
+            val parts = line.split('|')
+            if (parts.size != 4) return@mapNotNull null
+            val minuteMs = parts[0].toLongOrNull() ?: return@mapNotNull null
+            val bytes = parts[3].toLongOrNull() ?: return@mapNotNull null
+            UsageLogEntry(
+                minuteMs = minuteMs,
+                packageName = parts[1],
+                label = parts[2],
+                bytes = bytes
+            )
+        }.toList()
     }
 }

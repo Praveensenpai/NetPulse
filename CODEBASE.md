@@ -70,6 +70,38 @@ Kernel (/proc/net/dev) ──> TrafficDataSource ──> NetPulseService
   ```
 - **Consumers**: `NetPulseService`, `HomeViewModel`.
 
+### `com.netpulse.app.data.source.AppUsageDataSource` (Role: data, Lines: 244)
+- **Responsibility**: Per-app byte totals since local midnight via `NetworkStatsManager`. Walks every installed UID with `queryDetailsForUid` (a whole-day `queryDetails` is silently capped at 100 rows, and Samsung records streaming traffic in the FOREGROUND stats set that `querySummary` omits). Discovery is spread across polls in slices of `SWEEP_SLICE`; apps already reporting traffic are refreshed every poll so their totals stay live. Queries end at `now + BUCKET_PAD_MS`, not `now`: `NetworkStatsManager` returns a bucket only when it lies entirely inside `[start, end]`, so the open bucket containing the current moment is otherwise invisible (device-verified: `day..now` returned 0 rows, `day..now+2h` returned the live bucket). Buckets ending before local midnight are filtered out, so the pad cannot leak yesterday into today. If the per-UID pass yields nothing, a chunked `queryDetails` fallback runs at most once per `FALLBACK_INTERVAL_MS`, subdividing any window that returns `ROW_CAP` rows so truncation cannot occur.
+- **Public Functions**:
+  ```kotlin
+  fun hasUsageAccess(): Boolean                 // AppOps GET_USAGE_STATS
+  fun queryTodayTotals(): Map<String, Long>     // packageName -> rx+tx bytes
+  fun labelFor(packageName: String): String
+  ```
+- **Consumers**: `AppUsageTracker`.
+
+### `com.netpulse.app.core.AppUsageTracker` (Role: core, Lines: 154)
+- **Responsibility**: Converts per-app totals into live rates and a bounded minute-resolution log. Deltas are clamped (NetworkStats jitters) and reported rates decay over `RATE_DECAY_MS` instead of dropping instantly.
+- **Public Symbols**:
+  ```kotlin
+  val liveApps: StateFlow<List<AppUsage>>       // sorted by bytesPerSec
+  val log: StateFlow<List<UsageLogEntry>>       // MAX_LOG_ENTRIES = 300
+  fun hasUsageAccess(): Boolean
+  fun seedLog(entries: List<UsageLogEntry>)     // restore persisted log on start
+  fun reset()
+  fun poll(): Boolean                            // true when the log grew
+  ```
+- **Consumers**: `NetPulseService` (poll loop), `HomeViewModel`.
+
+### `com.netpulse.app.ui.components.AppUsageCard / UsageLogCard` (Role: ui, Lines: 208)
+- **Responsibility**: Renders the live per-app ranking with proportional bars, the usage-access prompt, and the scrollable minute log.
+- **Public Functions**:
+  ```kotlin
+  fun AppUsageCard(apps: ImmutableList<AppUsage>, hasUsageAccess: Boolean, onRequestAccess: () -> Unit)
+  fun UsageLogCard(entries: ImmutableList<UsageLogEntry>)
+  ```
+- **Consumers**: `HomeScreen`.
+
 ### `com.netpulse.app.core.NetworkMonitor` (Role: core, Lines: 65)
 - **Responsibility**: Observes network transports (Wi-Fi, Mobile) via `ConnectivityManager.NetworkCallback`.
 - **Public Functions**:
@@ -162,3 +194,4 @@ Kernel (/proc/net/dev) ──> TrafficDataSource ──> NetPulseService
 ## 6. Recent Iteration Changes
 - **2026-10-13**: Initialized complete NetPulse architecture (core, domain, data, service, Compose UI, unit tests, GitHub CI/Release workflows).
 - **2026-10-14**: v1.0.1 fix release. Added runtime `POST_NOTIFICATIONS` request (fixes dead notification/status-bar speed on Android 13+); R8 minify + resource shrink (42 MB -> 2.1 MB); stable release keystore (`keystore.properties` + GitHub secrets, fixes per-build dynamic debug key); `TelemetryManager` (core) decouples sampling from UI; `HomeUiState` gains `hasNotificationPermission`/`canDrawOverlays`; overlay permission prompt in `SettingsViewModel`.
+- **2026-10-28**: Per-app live usage + usage log. `NetworkStatsManager` is the only source that can see other UIDs (`TrafficStats.getUidRxBytes` returns -1 for them). Per-UID queries replace whole-day `queryDetails` (silently capped at 100 rows, which froze totals). `AppUsageTracker` derives decaying rates from clamped deltas and folds them into a 300-entry minute log persisted to DataStore. Manifest gains `QUERY_ALL_PACKAGES` (sideloaded apps were invisible) and `PACKAGE_USAGE_STATS`. Status-bar glyph now always keeps its unit letter (`MAX_LABEL_LENGTH = 4`, `TEXT_SCALE_X = 1.0`). Root cause of the empty/frozen per-app list: `NetworkStatsManager` discards any bucket not fully inside the queried window, so `end=now` hid the open bucket. Window is now padded (`BUCKET_PAD_MS`) and buckets ending before local midnight are dropped. Device-verified: YouTube 1.3 MB/s then 1.5 MB/s during transfer, decaying to 42.5 KB/s; usage log persisted `01:56 YouTube 11.9 MB` and `01:59 YouTube 8.0 MB`. Chunked `queryDetails` fallback retained and rate-limited to `FALLBACK_INTERVAL_MS`, subdividing `ROW_CAP` windows.

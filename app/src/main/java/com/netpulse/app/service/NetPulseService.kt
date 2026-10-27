@@ -19,6 +19,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
@@ -144,12 +145,19 @@ class NetPulseService : Service() {
         val app = NetPulseApp.instance
         app.trafficDataSource.reset()
 
+        serviceScope.launch {
+            app.localDataStore.observeAppUsageLog()
+                .firstOrNull()
+                ?.let(app.appUsageTracker::seedLog)
+        }
+
         pollingJob = serviceScope.launch {
             while (isActive) {
                 val snapshot = app.trafficDataSource.sample()
                 TelemetryManager.updateSpeed(snapshot)
 
                 recordConsumption(app)
+                pollAppUsage(app)
                 pushNotification(snapshot)
 
                 if (currentPreferences.showFloatingOverlay) {
@@ -170,6 +178,13 @@ class NetPulseService : Service() {
             ActiveNetworkType.WIFI -> app.usageRepository.recordUsage(0L, delta.totalBytes)
             ActiveNetworkType.MOBILE -> app.usageRepository.recordUsage(delta.totalBytes, 0L)
             else -> Unit
+        }
+    }
+
+    /** Polls per-app counters; persisted only when the minute log actually grew. */
+    private suspend fun pollAppUsage(app: NetPulseApp) {
+        if (app.appUsageTracker.poll()) {
+            app.localDataStore.saveAppUsageLog(app.appUsageTracker.log.value)
         }
     }
 

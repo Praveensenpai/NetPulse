@@ -1,9 +1,11 @@
 package com.netpulse.app
 
 import android.app.Application
+import com.netpulse.app.core.AppUsageTracker
 import com.netpulse.app.core.NetworkMonitor
 import com.netpulse.app.data.repository.PreferencesRepositoryImpl
 import com.netpulse.app.data.repository.UsageRepositoryImpl
+import com.netpulse.app.data.source.AppUsageDataSource
 import com.netpulse.app.data.source.LocalDataStore
 import com.netpulse.app.data.source.TrafficDataSource
 import com.netpulse.app.domain.repository.PreferencesRepository
@@ -22,6 +24,8 @@ class NetPulseApp : Application() {
         private set
     lateinit var networkMonitor: NetworkMonitor
         private set
+    lateinit var appUsageTracker: AppUsageTracker
+        private set
 
     override fun onCreate() {
         super.onCreate()
@@ -32,6 +36,7 @@ class NetPulseApp : Application() {
         usageRepository = UsageRepositoryImpl(localDataStore)
         trafficDataSource = TrafficDataSource()
         networkMonitor = NetworkMonitor(this)
+        appUsageTracker = AppUsageTracker(AppUsageDataSource(this))
 
         SpeedNotificationManager.createNotificationChannel(this)
     }

@@ -28,9 +28,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import com.netpulse.app.ui.components.AppUsageCard
 import com.netpulse.app.ui.components.SpeedGaugeCard
 import com.netpulse.app.ui.components.StatusHeader
 import com.netpulse.app.ui.components.UsageSummaryCard
+import com.netpulse.app.ui.components.UsageLogCard
 import com.netpulse.app.ui.theme.BatteryWarningOrange
 import com.netpulse.app.ui.theme.Dimens
 
@@ -82,6 +84,18 @@ fun HomeScreen(
                     onFixClick = { onEvent(HomeEvent.RequestBatteryExemption) }
                 )
             }
+        }
+
+        item(key = "app_usage") {
+            AppUsageCard(
+                apps = state.appUsage,
+                hasUsageAccess = state.hasUsageAccess,
+                onRequestAccess = { onEvent(HomeEvent.RequestUsageAccess) }
+            )
+        }
+
+        item(key = "usage_log") {
+            UsageLogCard(entries = state.usageLog)
         }
 
         item(key = "toggle_action") {

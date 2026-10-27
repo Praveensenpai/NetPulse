@@ -68,11 +68,11 @@ object SpeedFormatter {
     }
 
     fun formatDataUsage(bytes: Long): String {
-        if (bytes <= 0L) return "0 MB"
+        if (bytes <= 0L) return "0 B"
         val kb = bytes / 1024.0
         val mb = kb / 1024.0
         return when {
-            kb < 1.0 -> "0 MB"
+            kb < 1.0 -> "$bytes B"
             mb < 1.0 -> String.format(Locale.US, "%.0f KB", kb)
             mb < 1024.0 -> String.format(Locale.US, "%.1f MB", mb)
             else -> String.format(Locale.US, "%.2f GB", mb / 1024.0)

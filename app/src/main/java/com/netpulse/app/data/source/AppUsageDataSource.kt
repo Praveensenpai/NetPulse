@@ -1,0 +1,244 @@
+package com.netpulse.app.data.source
+
+import android.app.AppOpsManager
+import android.app.usage.NetworkStats
+import android.app.usage.NetworkStatsManager
+import android.content.Context
+import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.os.Process
+import android.util.Log
+import java.util.Calendar
+
+class AppUsageDataSource(private val context: Context) {
+
+    private val packageManager: PackageManager = context.packageManager
+    private val statsManager: NetworkStatsManager? =
+        context.getSystemService(NetworkStatsManager::class.java)
+    private var uidToPackage: Map<Int, String> = emptyMap()
+    private var packageMapBuiltAt = 0L
+    private val labelCache = HashMap<String, String>()
+
+    private val sweepTotals = HashMap<String, Long>()
+    private val pendingSweep = LinkedHashMap<String, Long>()
+    private var sweepDay = 0L
+    private var lastFallbackAt = 0L
+
+    fun hasUsageAccess(): Boolean {
+        val ops = context.getSystemService(AppOpsManager::class.java) ?: return false
+        val mode = ops.unsafeCheckOpNoThrow(
+            AppOpsManager.OPSTR_GET_USAGE_STATS,
+            Process.myUid(),
+            context.packageName
+        )
+        return mode == AppOpsManager.MODE_ALLOWED
+    }
+
+    fun queryTodayTotals(): Map<String, Long> {
+        val manager = statsManager ?: return emptyMap()
+        if (!hasUsageAccess()) return emptyMap()
+
+        val dayStart = startOfTodayMs()
+        val now = System.currentTimeMillis()
+        // Buckets are only returned when fully inside [start, end] and the
+        // bucket containing "now" is still open, so the window is padded past
+        // it. Without this the newest bucket is invisible for up to one
+        // bucketDuration, which looked like a stalled counter.
+        val queryEnd = now + BUCKET_PAD_MS
+        refreshPackageMapIfStale()
+
+        if (sweepDay != dayStart) {
+            sweepTotals.clear()
+            pendingSweep.clear()
+            sweepDay = dayStart
+        }
+
+        // Apps that already reported traffic are refreshed every poll, so a
+        // streaming app's total advances at the poll rate instead of waiting
+        // for the full sweep to come back around.
+        for (packageName in sweepTotals.keys.toList()) {
+            val uid = uidForPackage(packageName) ?: continue
+            val bytes = queryUid(manager, uid, dayStart, queryEnd)
+            if (bytes > 0L) sweepTotals[packageName] = bytes
+        }
+
+        // Discovery is the expensive part (~400 IPC for every UID), so it is
+        // spread across polls in fixed slices.
+        if (pendingSweep.isEmpty()) {
+            for ((uid, packageName) in uidToPackage) {
+                if (packageName !in sweepTotals) pendingSweep[packageName] = uid.toLong()
+            }
+        }
+
+        val batch = pendingSweep.entries.take(SWEEP_SLICE)
+        for (entry in batch) {
+            val uid = entry.value.toInt()
+            val bytes = queryUid(manager, uid, dayStart, queryEnd)
+            if (bytes > 0L) sweepTotals[entry.key] = bytes
+            pendingSweep.remove(entry.key)
+        }
+
+        // Some devices report per-UID history only for the aggregate bucket
+        // (uid=-1), which leaves the per-UID pass empty. Fall back to a
+        // chunked query, but at a low rate: it is a whole-day scan.
+        if (sweepTotals.isEmpty() && now - lastFallbackAt > FALLBACK_INTERVAL_MS) {
+            lastFallbackAt = now
+            for ((key, value) in queryChunked(manager, dayStart, queryEnd)) {
+                val known = sweepTotals[key] ?: 0L
+                if (value > known) sweepTotals[key] = value
+            }
+        }
+        return sweepTotals.toMap()
+    }
+
+    private fun queryChunked(
+        manager: NetworkStatsManager,
+        start: Long,
+        end: Long
+    ): Map<String, Long> {
+        val out = HashMap<String, Long>()
+        for (type in intArrayOf(ConnectivityManager.TYPE_WIFI, ConnectivityManager.TYPE_MOBILE)) {
+            collectChunks(manager, type, start, end, out)
+        }
+        return out
+    }
+
+    private fun collectChunks(
+        manager: NetworkStatsManager,
+        type: Int,
+        start: Long,
+        end: Long,
+        out: MutableMap<String, Long>
+    ) {
+        val stats = try {
+            manager.queryDetails(type, null, start, end)
+        } catch (e: Exception) {
+            Log.w(TAG, "queryDetails failed", e)
+            return
+        }
+        val window = HashMap<String, Long>()
+        var rows = 0
+        try {
+            val bucket = NetworkStats.Bucket()
+            while (stats.hasNextBucket()) {
+                stats.getNextBucket(bucket)
+                if (bucket.endTimeStamp <= start) continue
+                rows++
+                val pkg = uidToPackage[bucket.uid] ?: continue
+                window[pkg] = (window[pkg] ?: 0L) + bucket.rxBytes + bucket.txBytes
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "bucket read failed", e)
+            return
+        } finally {
+            stats.close()
+        }
+        if (rows >= ROW_CAP && end - start > MIN_SPLIT_MS) {
+            val mid = start + (end - start) / 2
+            collectChunks(manager, type, start, mid, out)
+            collectChunks(manager, type, mid, end, out)
+            return
+        }
+        for ((key, value) in window) out[key] = (out[key] ?: 0L) + value
+    }
+
+    private fun uidForPackage(packageName: String): Int? {
+        refreshPackageMapIfStale()
+        return uidToPackage.entries.firstOrNull { it.value == packageName }?.key
+    }
+
+    private fun queryUid(
+        manager: NetworkStatsManager,
+        uid: Int,
+        start: Long,
+        end: Long
+    ): Long {
+        val wifi = uidBytes(manager, ConnectivityManager.TYPE_WIFI, uid, start, end)
+        val mobile = uidBytes(manager, ConnectivityManager.TYPE_MOBILE, uid, start, end)
+        return wifi + mobile
+    }
+
+    private fun uidBytes(
+        manager: NetworkStatsManager,
+        type: Int,
+        uid: Int,
+        start: Long,
+        end: Long
+    ): Long {
+        val stats = try {
+            manager.queryDetailsForUid(type, null, start, end, uid)
+        } catch (e: Exception) {
+            Log.w(TAG, "queryDetailsForUid failed", e)
+            return 0L
+        }
+
+        return try {
+            val bucket = NetworkStats.Bucket()
+            var sum = 0L
+            while (stats.hasNextBucket()) {
+                stats.getNextBucket(bucket)
+                if (bucket.endTimeStamp <= start) continue
+                sum += bucket.rxBytes + bucket.txBytes
+            }
+            sum
+        } catch (e: Exception) {
+            Log.w(TAG, "bucket read failed", e)
+            0L
+        } finally {
+            stats.close()
+        }
+    }
+
+    fun labelFor(packageName: String): String {
+        labelCache[packageName]?.let { return it }
+        val resolved = try {
+            val info = packageManager.getApplicationInfo(packageName, 0)
+            packageManager.getApplicationLabel(info).toString()
+        } catch (e: PackageManager.NameNotFoundException) {
+            packageName
+        }
+        labelCache[packageName] = resolved
+        return resolved
+    }
+
+    private fun refreshPackageMapIfStale() {
+        val now = System.currentTimeMillis()
+        if (uidToPackage.isNotEmpty() && now - packageMapBuiltAt < PACKAGE_MAP_TTL_MS) return
+        val map = HashMap<Int, String>()
+        val apps = try {
+            packageManager.getInstalledApplications(0)
+        } catch (e: Exception) {
+            Log.w(TAG, "package enumeration failed", e)
+            return
+        }
+        for (app in apps) {
+            map.putIfAbsent(app.uid, app.packageName)
+        }
+        uidToPackage = map
+        packageMapBuiltAt = now
+    }
+
+    private fun startOfTodayMs(): Long {
+        val calendar = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        return calendar.timeInMillis
+    }
+
+    private companion object {
+        const val TAG = "AppUsageDataSource"
+        const val PACKAGE_MAP_TTL_MS = 60_000L
+        const val SWEEP_SLICE = 16
+        const val ROW_CAP = 100
+        const val MIN_SPLIT_MS = 60_000L
+        const val FALLBACK_INTERVAL_MS = 120_000L
+        // Generous pad: bucket duration varies by OEM (2 h on AOSP, longer on
+        // some Samsung builds). Padding past the open bucket is safe because
+        // buckets only exist in the past and the dayStart filter drops any
+        // bucket that ends before local midnight.
+        const val BUCKET_PAD_MS = 43_200_000L
+    }
+}

@@ -53,18 +53,18 @@ class SpeedFormatterTest {
     }
 
     @Test
-    fun formatDataUsage_zeroBytes_returnsZeroMegabytes() {
-        assertThat(SpeedFormatter.formatDataUsage(0L)).isEqualTo("0 MB")
+    fun formatDataUsage_zeroBytes_rendersZeroBytes() {
+        assertThat(SpeedFormatter.formatDataUsage(0L)).isEqualTo("0 B")
     }
 
     @Test
-    fun formatDataUsage_negativeBytes_returnsZeroMegabytes() {
-        assertThat(SpeedFormatter.formatDataUsage(-1024L)).isEqualTo("0 MB")
+    fun formatDataUsage_negativeBytes_rendersZeroBytes() {
+        assertThat(SpeedFormatter.formatDataUsage(-1024L)).isEqualTo("0 B")
     }
 
     @Test
-    fun formatDataUsage_subKilobyte_roundsToZeroMegabytes() {
-        assertThat(SpeedFormatter.formatDataUsage(512L)).isEqualTo("0 MB")
+    fun formatDataUsage_subKilobyte_rendersExactBytes() {
+        assertThat(SpeedFormatter.formatDataUsage(512L)).isEqualTo("512 B")
     }
 
     @Test
