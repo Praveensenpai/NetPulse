@@ -77,10 +77,15 @@ jobs:
             else
               RANGE="${TAG_NAME}"
             fi
+            BODY=$(git log --pretty='- %s' "$RANGE" 2>/dev/null || true)
             {
               echo "## ${TAG_NAME}"
               echo
-              git log --pretty='- %s' "$RANGE"
+              if [ -n "$BODY" ]; then
+                echo "$BODY"
+              else
+                echo "See the commit history for changes in this release."
+              fi
             } > release_notes.md
           fi
           if [ ! -s release_notes.md ]; then
