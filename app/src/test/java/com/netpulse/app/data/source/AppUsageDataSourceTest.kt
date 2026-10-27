@@ -28,6 +28,26 @@ class AppUsageDataSourceTest {
         assertThat(AppUsageDataSource.countsTowardDay(dayStart - bucketMs, dayStart)).isFalse()
     }
 
+    @Test
+    fun baselineWindow_openJustAfterMidnight() {
+        assertThat(AppUsageDataSource.withinBaselineWindow(dayStart + 1_000L, dayStart)).isTrue()
+    }
+
+    @Test
+    fun baselineWindow_stillOpenAtGraceBoundary() {
+        assertThat(AppUsageDataSource.withinBaselineWindow(dayStart + 120_000L, dayStart)).isTrue()
+    }
+
+    @Test
+    fun baselineWindow_closedOneMsAfterGrace() {
+        assertThat(AppUsageDataSource.withinBaselineWindow(dayStart + 120_001L, dayStart)).isFalse()
+    }
+
+    @Test
+    fun baselineWindow_closedLateInTheDay() {
+        assertThat(AppUsageDataSource.withinBaselineWindow(dayStart + 16 * 3_600_000L, dayStart)).isFalse()
+    }
+
     /**
      * Documents the known overcount: a bucket spanning midnight is kept whole,
      * because the framework gives no way to split it.

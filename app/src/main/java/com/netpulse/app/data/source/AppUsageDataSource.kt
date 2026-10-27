@@ -23,6 +23,9 @@ class AppUsageDataSource(private val context: Context) {
     private val pendingSweep = LinkedHashMap<String, Long>()
     private var sweepDay = 0L
     private var lastFallbackAt = 0L
+    private val baselines = HashMap<Int, Long>()
+    private var baselineDay = 0L
+    private var baselineClosed = false
 
     fun hasUsageAccess(): Boolean {
         val ops = context.getSystemService(AppOpsManager::class.java) ?: return false
@@ -53,12 +56,23 @@ class AppUsageDataSource(private val context: Context) {
             sweepDay = dayStart
         }
 
+        if (baselineDay != dayStart) {
+            baselines.clear()
+            baselineDay = dayStart
+            // Only a service already running near midnight can capture a
+            // meaningful baseline. Starting later means the day's earlier bytes
+            // must come from whole-bucket sums, or they would be subtracted away.
+            baselineClosed = !withinBaselineWindow(now, dayStart)
+        } else if (!baselineClosed && !withinBaselineWindow(now, dayStart)) {
+            baselineClosed = true
+        }
+
         // Apps that already reported traffic are refreshed every poll, so a
         // streaming app's total advances at the poll rate instead of waiting
         // for the full sweep to come back around.
         for (packageName in sweepTotals.keys.toList()) {
             val uid = uidForPackage(packageName) ?: continue
-            val bytes = queryUid(manager, uid, dayStart, queryEnd)
+            val bytes = todayBytes(manager, uid, dayStart, queryEnd)
             if (bytes > 0L) sweepTotals[packageName] = bytes
         }
 
@@ -73,7 +87,7 @@ class AppUsageDataSource(private val context: Context) {
         val batch = pendingSweep.entries.take(SWEEP_SLICE)
         for (entry in batch) {
             val uid = entry.value.toInt()
-            val bytes = queryUid(manager, uid, dayStart, queryEnd)
+            val bytes = todayBytes(manager, uid, dayStart, queryEnd)
             if (bytes > 0L) sweepTotals[entry.key] = bytes
             pendingSweep.remove(entry.key)
         }
@@ -145,6 +159,37 @@ class AppUsageDataSource(private val context: Context) {
     private fun uidForPackage(packageName: String): Int? {
         refreshPackageMapIfStale()
         return uidToPackage.entries.firstOrNull { it.value == packageName }?.key
+    }
+
+    /**
+     * Bytes attributable to today for one UID.
+     *
+     * The bucket covering local midnight straddles it (verified: the grid is
+     * :30-aligned, so the first bucket of the day runs 23:30-01:30). Keeping it
+     * whole overstates today by the pre-midnight portion. When the service is
+     * running across midnight a baseline of the UID's cumulative total is taken
+     * on its first visit, and today becomes `all - baseline`, which is exact.
+     *
+     * If no baseline was captured in time (service started later in the day)
+     * this falls back to the whole-bucket sum, which is the previous behavior.
+     */
+    private fun todayBytes(
+        manager: NetworkStatsManager,
+        uid: Int,
+        dayStart: Long,
+        queryEnd: Long
+    ): Long {
+        val base = baselines[uid]
+        if (base == null) {
+            val whole = queryUid(manager, uid, dayStart, queryEnd)
+            if (baselineClosed) return whole
+            baselines[uid] = queryUid(manager, uid, 0L, queryEnd)
+            // First visit after midnight: report the whole-bucket sum once so
+            // nothing disappears, then switch to the exact difference.
+            return whole
+        }
+        val all = queryUid(manager, uid, 0L, queryEnd)
+        return (all - base).coerceAtLeast(0L)
     }
 
     private fun queryUid(
@@ -240,6 +285,7 @@ class AppUsageDataSource(private val context: Context) {
         // buckets only exist in the past and the dayStart filter drops any
         // bucket that ends before local midnight.
         private const val BUCKET_PAD_MS = 43_200_000L
+        private const val BASELINE_GRACE_MS = 120_000L
 
         /**
          * A bucket counts toward today when it ends after local midnight.
@@ -249,6 +295,10 @@ class AppUsageDataSource(private val context: Context) {
          * be attributed separately. Such a bucket is counted in full, which can
          * overstate today's first bucket by up to one bucketDuration of yesterday.
          */
+        /** True while a midnight-crossing baseline is still worth capturing. */
+        internal fun withinBaselineWindow(nowMs: Long, dayStartMs: Long): Boolean =
+            nowMs - dayStartMs <= BASELINE_GRACE_MS
+
         internal fun countsTowardDay(bucketEndMs: Long, dayStartMs: Long): Boolean =
             bucketEndMs > dayStartMs
     }
