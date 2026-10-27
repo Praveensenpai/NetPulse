@@ -89,13 +89,20 @@ Download the signed release APK directly from the GitHub Releases page:
 gh release download --pattern "*.apk"
 ```
 
-Or transfer `NetPulse-v1.0.0.apk` directly to your Samsung device and tap to install.
+Or transfer `NetPulse-v1.1.0.apk` directly to your Samsung device and tap to install.
 
 ---
 
 ## 🛠️ Build & Verification
 
-NetPulse adheres to strict clean-code architecture with 100% automated test coverage for speed calculation and data accounting:
+NetPulse adheres to strict clean-code architecture with 100% automated test coverage for speed calculation and data accounting.
+
+The Android SDK location is resolved from `ANDROID_HOME` (or a local `local.properties`, which is gitignored):
+
+```bash
+export ANDROID_HOME="$HOME/Android/Sdk"
+export ANDROID_SDK_ROOT="$ANDROID_HOME"
+```
 
 ```bash
 # 1. Run automated unit test suite
