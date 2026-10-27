@@ -122,7 +122,7 @@ class AppUsageDataSource(private val context: Context) {
             val bucket = NetworkStats.Bucket()
             while (stats.hasNextBucket()) {
                 stats.getNextBucket(bucket)
-                if (bucket.endTimeStamp <= start) continue
+                if (!countsTowardDay(bucket.endTimeStamp, start)) continue
                 rows++
                 val pkg = uidToPackage[bucket.uid] ?: continue
                 window[pkg] = (window[pkg] ?: 0L) + bucket.rxBytes + bucket.txBytes
@@ -177,7 +177,7 @@ class AppUsageDataSource(private val context: Context) {
             var sum = 0L
             while (stats.hasNextBucket()) {
                 stats.getNextBucket(bucket)
-                if (bucket.endTimeStamp <= start) continue
+                if (!countsTowardDay(bucket.endTimeStamp, start)) continue
                 sum += bucket.rxBytes + bucket.txBytes
             }
             sum
@@ -228,17 +228,28 @@ class AppUsageDataSource(private val context: Context) {
         return calendar.timeInMillis
     }
 
-    private companion object {
-        const val TAG = "AppUsageDataSource"
-        const val PACKAGE_MAP_TTL_MS = 60_000L
-        const val SWEEP_SLICE = 16
-        const val ROW_CAP = 100
-        const val MIN_SPLIT_MS = 60_000L
-        const val FALLBACK_INTERVAL_MS = 120_000L
+    companion object {
+        private const val TAG = "AppUsageDataSource"
+        private const val PACKAGE_MAP_TTL_MS = 60_000L
+        private const val SWEEP_SLICE = 16
+        private const val ROW_CAP = 100
+        private const val MIN_SPLIT_MS = 60_000L
+        private const val FALLBACK_INTERVAL_MS = 120_000L
         // Generous pad: bucket duration varies by OEM (2 h on AOSP, longer on
         // some Samsung builds). Padding past the open bucket is safe because
         // buckets only exist in the past and the dayStart filter drops any
         // bucket that ends before local midnight.
-        const val BUCKET_PAD_MS = 43_200_000L
+        private const val BUCKET_PAD_MS = 43_200_000L
+
+        /**
+         * A bucket counts toward today when it ends after local midnight.
+         *
+         * A bucket that straddles midnight is deliberately kept: [NetworkStats.Bucket]
+         * exposes whole-bucket totals only, so the portion before midnight cannot
+         * be attributed separately. Such a bucket is counted in full, which can
+         * overstate today's first bucket by up to one bucketDuration of yesterday.
+         */
+        internal fun countsTowardDay(bucketEndMs: Long, dayStartMs: Long): Boolean =
+            bucketEndMs > dayStartMs
     }
 }
