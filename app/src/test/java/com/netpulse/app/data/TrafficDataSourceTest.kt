@@ -12,7 +12,7 @@ class FakeTrafficStatsProvider(
 ) : TrafficStatsProvider {
     override fun getTotalRxBytes(): Long = rx
     override fun getTotalTxBytes(): Long = tx
-    override fun getCurrentTimeMillis(): Long = timeMs
+    override fun getElapsedRealtimeMs(): Long = timeMs
 }
 
 class TrafficDataSourceTest {
@@ -57,5 +57,40 @@ class TrafficDataSourceTest {
         val afterReboot = dataSource.sample()
         assertThat(afterReboot.downloadBytesPerSec).isEqualTo(0L)
         assertThat(afterReboot.uploadBytesPerSec).isEqualTo(0L)
+    }
+
+    @Test
+    fun consumeDelta_reportsExactBytesAndResets() {
+        val fake = FakeTrafficStatsProvider(rx = 0L, tx = 0L, timeMs = 1000L)
+        val dataSource = TrafficDataSource(fake)
+        dataSource.sample()
+
+        fake.rx = 4096L
+        fake.tx = 1024L
+        fake.timeMs = 2000L
+        dataSource.sample()
+
+        val delta = dataSource.consumeDelta()
+        assertThat(delta.rxBytes).isEqualTo(4096L)
+        assertThat(delta.txBytes).isEqualTo(1024L)
+
+        val second = dataSource.consumeDelta()
+        assertThat(second.totalBytes).isEqualTo(0L)
+    }
+
+    @Test
+    fun consumeDelta_afterSlowTick_reflectsRealBytesNotRate() {
+        val fake = FakeTrafficStatsProvider(rx = 0L, tx = 0L, timeMs = 1000L)
+        val dataSource = TrafficDataSource(fake)
+        dataSource.sample()
+
+        // 10 seconds elapsed, 100_000 bytes transferred: rate is 10 KB/s,
+        // but the ledger must record the full 100_000 bytes.
+        fake.rx = 100_000L
+        fake.timeMs = 11_000L
+        val snapshot = dataSource.sample()
+
+        assertThat(snapshot.downloadBytesPerSec).isEqualTo(10_000L)
+        assertThat(dataSource.consumeDelta().rxBytes).isEqualTo(100_000L)
     }
 }

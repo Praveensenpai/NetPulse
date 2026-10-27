@@ -47,6 +47,13 @@ fun StatusHeader(
         ActiveNetworkType.MOBILE -> Icons.Rounded.SignalCellularAlt
         else -> Icons.Rounded.SignalCellularOff
     }
+    val netLabel = when (networkType) {
+        ActiveNetworkType.WIFI -> "Wi-Fi"
+        ActiveNetworkType.MOBILE -> "Mobile Data"
+        ActiveNetworkType.ETHERNET -> "Ethernet"
+        ActiveNetworkType.OTHER -> "Connected"
+        ActiveNetworkType.NONE -> "Offline"
+    }
 
     Row(
         modifier = modifier.fillMaxWidth(),
@@ -60,7 +67,11 @@ fun StatusHeader(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
-                    imageVector = if (isServiceActive) Icons.Rounded.CheckCircle else Icons.Rounded.PauseCircle,
+                    imageVector = if (isServiceActive) {
+                        Icons.Rounded.CheckCircle
+                    } else {
+                        Icons.Rounded.PauseCircle
+                    },
                     contentDescription = null,
                     tint = statusColor,
                     modifier = Modifier.size(Dimens.iconSizeSm)
@@ -68,17 +79,25 @@ fun StatusHeader(
                 Spacer(modifier = Modifier.width(Dimens.xs))
                 Text(
                     text = if (isServiceActive) "Monitoring Active" else "Monitoring Paused",
-                    style = MaterialTheme.typography.labelMedium,
+                    style = MaterialTheme.typography.labelLarge,
                     color = statusColor
                 )
             }
         }
 
-        Icon(
-            imageVector = netIcon,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(Dimens.iconSizeMd)
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                imageVector = netIcon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(Dimens.iconSizeSm)
+            )
+            Spacer(modifier = Modifier.width(Dimens.xs))
+            Text(
+                text = netLabel,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }

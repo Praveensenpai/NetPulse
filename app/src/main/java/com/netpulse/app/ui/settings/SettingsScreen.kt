@@ -3,6 +3,8 @@ package com.netpulse.app.ui.settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.BatterySaver
@@ -11,6 +13,9 @@ import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Power
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.SwapVert
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import com.netpulse.app.ui.components.SettingToggleRow
@@ -29,13 +34,23 @@ fun SettingsScreen(
         contentPadding = PaddingValues(Dimens.md),
         verticalArrangement = Arrangement.spacedBy(Dimens.sm)
     ) {
+        item(key = "show_notification") {
+            SettingToggleRow(
+                title = "Status Bar Notification",
+                description = "Keep the live speed readout pinned in the notification shade",
+                checked = prefs.showNotification,
+                onCheckedChange = { onEvent(SettingsEvent.ToggleNotification(it)) },
+                icon = Icons.Rounded.Notifications
+            )
+        }
+
         item(key = "status_bar_icon") {
             SettingToggleRow(
-                title = "Status Bar Dynamic Icon",
-                description = "Display real-time numeric speed in status bar",
+                title = "Dynamic Speed Icon",
+                description = "Render the numeric speed inside the status bar icon",
                 checked = prefs.showStatusBarIcon,
                 onCheckedChange = { onEvent(SettingsEvent.ToggleStatusBarIcon(it)) },
-                icon = Icons.Rounded.Notifications
+                icon = Icons.Rounded.Speed
             )
         }
 
@@ -72,8 +87,12 @@ fun SettingsScreen(
         item(key = "floating_overlay") {
             SettingToggleRow(
                 title = "Floating Mini Overlay",
-                description = "Draggable on-screen telemetry pill badge",
-                checked = prefs.showFloatingOverlay,
+                description = if (state.canDrawOverlays) {
+                    "Draggable on-screen telemetry pill badge"
+                } else {
+                    "Requires the 'Display over other apps' permission"
+                },
+                checked = prefs.showFloatingOverlay && state.canDrawOverlays,
                 onCheckedChange = { onEvent(SettingsEvent.ToggleFloatingOverlay(it)) },
                 icon = Icons.Rounded.Layers
             )
@@ -86,6 +105,26 @@ fun SettingsScreen(
                 checked = prefs.startOnBoot,
                 onCheckedChange = { onEvent(SettingsEvent.ToggleStartOnBoot(it)) },
                 icon = Icons.Rounded.Power
+            )
+        }
+
+        item(key = "reset_usage") {
+            OutlinedButton(
+                onClick = { onEvent(SettingsEvent.ResetTodayUsage) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = Dimens.sm)
+            ) {
+                Text(text = "Reset Today's Data Usage")
+            }
+        }
+
+        item(key = "settings_footer") {
+            Text(
+                text = "NetPulse samples kernel counters once per second and stores nothing off-device.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = Dimens.sm)
             )
         }
     }

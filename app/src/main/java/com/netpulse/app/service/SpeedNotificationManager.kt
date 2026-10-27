@@ -20,6 +20,15 @@ class SpeedNotificationManager(private val context: Context) {
     private val notificationManager =
         context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
+    private fun contentIntent(): PendingIntent = PendingIntent.getActivity(
+        context,
+        0,
+        Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+        },
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+    )
+
     fun buildNotification(
         speed: SpeedSnapshot,
         usage: DailyUsage,
@@ -27,20 +36,11 @@ class SpeedNotificationManager(private val context: Context) {
         showUpload: Boolean = true,
         useDynamicIcon: Boolean = true
     ): Notification {
-        val pendingIntent = PendingIntent.getActivity(
-            context,
-            0,
-            Intent(context, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
-            },
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-
         val dl = SpeedFormatter.formatSpeed(speed.downloadBytesPerSec, unitInBits)
         val ul = SpeedFormatter.formatSpeed(speed.uploadBytesPerSec, unitInBits)
 
         val title = if (showUpload) {
-            "↓ ${dl.displayString}   ↑ ${ul.displayString}"
+            "\u2193 ${dl.displayString}   \u2191 ${ul.displayString}"
         } else {
             "Speed: ${dl.displayString}"
         }
@@ -49,25 +49,42 @@ class SpeedNotificationManager(private val context: Context) {
         val wifiStr = SpeedFormatter.formatDataUsage(usage.wifiBytes)
         val content = "Today: Mobile $mobileStr | Wi-Fi $wifiStr"
 
-        val builder = NotificationCompat.Builder(context, Constants.CHANNEL_ID)
+        val builder = baseBuilder()
             .setContentTitle(title)
             .setContentText(content)
-            .setContentIntent(pendingIntent)
+
+        if (useDynamicIcon) {
+            builder.setSmallIcon(dynamicIcon(speed, unitInBits))
+        } else {
+            builder.setSmallIcon(R.drawable.ic_stat_speed)
+        }
+
+        return builder.build()
+    }
+
+    /**
+     * Shown when the live readout is disabled. A foreground service must always
+     * display a notification, so this states what is happening instead of freezing
+     * the last speed value forever.
+     */
+    fun buildServiceNotification(): Notification = baseBuilder()
+        .setContentTitle(context.getString(R.string.app_name))
+        .setContentText("Monitoring in the background. Live speed display is off.")
+        .setSmallIcon(R.drawable.ic_stat_speed)
+        .build()
+
+    private fun baseBuilder(): NotificationCompat.Builder =
+        NotificationCompat.Builder(context, Constants.CHANNEL_ID)
+            .setContentIntent(contentIntent())
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
 
-        if (useDynamicIcon) {
-            val totalSpeed = SpeedFormatter.formatSpeed(speed.totalBytesPerSec, unitInBits)
-            val iconBitmap = SpeedIconGenerator.generateSpeedBitmap(totalSpeed)
-            builder.setSmallIcon(IconCompat.createWithBitmap(iconBitmap))
-        } else {
-            builder.setSmallIcon(R.drawable.ic_stat_speed)
-        }
-
-        return builder.build()
+    private fun dynamicIcon(speed: SpeedSnapshot, unitInBits: Boolean): IconCompat {
+        val totalSpeed = SpeedFormatter.formatSpeed(speed.totalBytesPerSec, unitInBits)
+        return IconCompat.createWithBitmap(SpeedIconGenerator.generateSpeedBitmap(totalSpeed))
     }
 
     fun updateNotification(notification: Notification) {

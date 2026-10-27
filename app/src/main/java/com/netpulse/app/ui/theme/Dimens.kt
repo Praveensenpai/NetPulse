@@ -17,7 +17,10 @@ object Dimens {
     val cornerPill = 999.dp
 
     val cardElevation = 2.dp
-    val iconSizeSm = 18.dp
-    val iconSizeMd = 24.dp
-    val iconSizeLg = 36.dp
+    val gaugeStroke = 10.dp
+
+    val iconSizeSm = 22.dp
+    val iconSizeMd = 26.dp
+    val iconSizeLg = 40.dp
+    val iconSizeXl = 52.dp
 }

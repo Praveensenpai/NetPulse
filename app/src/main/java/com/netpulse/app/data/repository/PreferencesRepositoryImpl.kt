@@ -22,6 +22,10 @@ class PreferencesRepositoryImpl(
         updatePreferences { it.copy(isServiceEnabled = enabled) }
     }
 
+    override suspend fun setShowNotification(show: Boolean) {
+        updatePreferences { it.copy(showNotification = show) }
+    }
+
     override suspend fun setFloatingOverlayEnabled(enabled: Boolean) {
         updatePreferences { it.copy(showFloatingOverlay = enabled) }
     }

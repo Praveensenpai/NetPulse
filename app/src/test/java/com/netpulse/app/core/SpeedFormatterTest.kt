@@ -51,4 +51,25 @@ class SpeedFormatterTest {
         val gb = (2.5 * 1024.0 * 1024.0 * 1024.0).toLong()
         assertThat(SpeedFormatter.formatDataUsage(gb)).isEqualTo("2.50 GB")
     }
+
+    @Test
+    fun formatDataUsage_zeroBytes_returnsZeroMegabytes() {
+        assertThat(SpeedFormatter.formatDataUsage(0L)).isEqualTo("0 MB")
+    }
+
+    @Test
+    fun formatDataUsage_negativeBytes_returnsZeroMegabytes() {
+        assertThat(SpeedFormatter.formatDataUsage(-1024L)).isEqualTo("0 MB")
+    }
+
+    @Test
+    fun formatDataUsage_subKilobyte_roundsToZeroMegabytes() {
+        assertThat(SpeedFormatter.formatDataUsage(512L)).isEqualTo("0 MB")
+    }
+
+    @Test
+    fun formatDataUsage_subMegabyte_rendersKilobytes() {
+        val bytes = 300L * 1024L
+        assertThat(SpeedFormatter.formatDataUsage(bytes)).isEqualTo("300 KB")
+    }
 }

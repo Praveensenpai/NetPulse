@@ -8,6 +8,7 @@ import android.os.IBinder
 import com.netpulse.app.NetPulseApp
 import com.netpulse.app.core.ActiveNetworkType
 import com.netpulse.app.core.Constants
+import com.netpulse.app.core.TelemetryManager
 import com.netpulse.app.domain.model.DailyUsage
 import com.netpulse.app.domain.model.MeterPreferences
 import com.netpulse.app.domain.model.SpeedSnapshot
@@ -57,20 +58,28 @@ class NetPulseService : Service() {
             }
             else -> {
                 startForegroundWithNotification()
-                startMonitoring()
+                if (currentPreferences.pauseWhenScreenOff && !isScreenOn) {
+                    stopMonitoring()
+                } else {
+                    startMonitoring()
+                }
             }
         }
         return START_STICKY
     }
 
     private fun startForegroundWithNotification() {
-        val initialNotification = notificationManager.buildNotification(
-            speed = SpeedSnapshot(),
-            usage = todayUsage,
-            unitInBits = currentPreferences.unitInBits,
-            showUpload = currentPreferences.showUploadSpeed,
-            useDynamicIcon = currentPreferences.showStatusBarIcon
-        )
+        val initialNotification = if (currentPreferences.showNotification) {
+            notificationManager.buildNotification(
+                speed = SpeedSnapshot(),
+                usage = todayUsage,
+                unitInBits = currentPreferences.unitInBits,
+                showUpload = currentPreferences.showUploadSpeed,
+                useDynamicIcon = currentPreferences.showStatusBarIcon
+            )
+        } else {
+            notificationManager.buildServiceNotification()
+        }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(
@@ -101,10 +110,20 @@ class NetPulseService : Service() {
                     return@collect
                 }
 
-                if (prefs.showFloatingOverlay && !prevPrefs.showFloatingOverlay) {
-                    overlayManager.show(prefs.overlayAlpha)
-                } else if (!prefs.showFloatingOverlay && prevPrefs.showFloatingOverlay) {
-                    overlayManager.hide()
+                // Always reconcile: the overlay may have been enabled before the
+                // permission was granted, in which case no state transition fires.
+                overlayManager.syncVisibility(prefs.showFloatingOverlay, prefs.overlayAlpha)
+
+                // Turning the live readout off must replace the stale speed text,
+                // otherwise the shade keeps showing a frozen value.
+                if (prevPrefs.showNotification != prefs.showNotification) {
+                    if (prefs.showNotification) {
+                        pushNotification(TelemetryManager.currentSpeed.value)
+                    } else {
+                        notificationManager.updateNotification(
+                            notificationManager.buildServiceNotification()
+                        )
+                    }
                 }
             }
         }
@@ -128,28 +147,10 @@ class NetPulseService : Service() {
         pollingJob = serviceScope.launch {
             while (isActive) {
                 val snapshot = app.trafficDataSource.sample()
-                com.netpulse.app.core.TelemetryManager.updateSpeed(snapshot)
+                TelemetryManager.updateSpeed(snapshot)
 
-                val conn = app.networkMonitor.getCurrentConnection()
-                val totalDelta = snapshot.downloadBytesPerSec + snapshot.uploadBytesPerSec
-                if (totalDelta > 0) {
-                    if (conn.type == ActiveNetworkType.WIFI) {
-                        app.usageRepository.recordUsage(0L, totalDelta)
-                    } else if (conn.type == ActiveNetworkType.MOBILE) {
-                        app.usageRepository.recordUsage(totalDelta, 0L)
-                    }
-                }
-
-                if (currentPreferences.showNotification) {
-                    val notif = notificationManager.buildNotification(
-                        speed = snapshot,
-                        usage = todayUsage,
-                        unitInBits = currentPreferences.unitInBits,
-                        showUpload = currentPreferences.showUploadSpeed,
-                        useDynamicIcon = currentPreferences.showStatusBarIcon
-                    )
-                    notificationManager.updateNotification(notif)
-                }
+                recordConsumption(app)
+                pushNotification(snapshot)
 
                 if (currentPreferences.showFloatingOverlay) {
                     overlayManager.updateSpeed(snapshot, currentPreferences.unitInBits)
@@ -160,10 +161,34 @@ class NetPulseService : Service() {
         }
     }
 
+    /** Uses exact byte counters rather than the rate so gaps never skew the ledger. */
+    private suspend fun recordConsumption(app: NetPulseApp) {
+        val delta = app.trafficDataSource.consumeDelta()
+        if (delta.totalBytes <= 0L) return
+
+        when (app.networkMonitor.getCurrentConnection().type) {
+            ActiveNetworkType.WIFI -> app.usageRepository.recordUsage(0L, delta.totalBytes)
+            ActiveNetworkType.MOBILE -> app.usageRepository.recordUsage(delta.totalBytes, 0L)
+            else -> Unit
+        }
+    }
+
+    private fun pushNotification(snapshot: SpeedSnapshot) {
+        if (!currentPreferences.showNotification) return
+        val notification = notificationManager.buildNotification(
+            speed = snapshot,
+            usage = todayUsage,
+            unitInBits = currentPreferences.unitInBits,
+            showUpload = currentPreferences.showUploadSpeed,
+            useDynamicIcon = currentPreferences.showStatusBarIcon
+        )
+        notificationManager.updateNotification(notification)
+    }
+
     private fun stopMonitoring() {
         pollingJob?.cancel()
         pollingJob = null
-        com.netpulse.app.core.TelemetryManager.reset()
+        TelemetryManager.reset()
         overlayManager.hide()
     }
 

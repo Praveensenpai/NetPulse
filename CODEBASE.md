@@ -39,12 +39,12 @@ Kernel (/proc/net/dev) ──> TrafficDataSource ──> NetPulseService
   ```
 - **Consumers**: `NetPulseService`, `SpeedNotificationManager`, `HomeViewModel`, `MainActivity`.
 
-### `com.netpulse.app.core.SpeedFormatter` (Role: core, Lines: 75)
+### `com.netpulse.app.core.SpeedFormatter` (Role: core, Lines: 88)
 - **Responsibility**: Pure speed throughput and storage data formatting for bytes/bits.
 - **Public Functions**:
   ```kotlin
   fun formatSpeed(bytesPerSec: Long, inBits: Boolean = false): FormattedSpeed
-  fun formatDataUsage(bytes: Long): String
+  fun formatDataUsage(bytes: Long): String  // 0 MB | N KB | N.N MB | N.NN GB
   data class FormattedSpeed(val value: String, val unit: String)
   ```
 - **Consumers**: `SpeedNotificationManager`, `FloatingOverlayManager`, `HomeViewModel`, UI cards.
@@ -131,7 +131,7 @@ Kernel (/proc/net/dev) ──> TrafficDataSource ──> NetPulseService
 
 ### `com.netpulse.app.ui.home.HomeRoute / HomeScreen` (Role: ui, Lines: 120)
 - **Responsibility**: Two-layer presentation displaying speed gauge, daily usage, and service controls.
-- **State Contract**: `HomeUiState` (immutable), `HomeEvent` (sealed interface).
+- **State Contract**: `HomeUiState` (immutable, includes `showUploadSpeed`), `HomeEvent` (sealed interface).
 
 ### `com.netpulse.app.ui.settings.SettingsRoute / SettingsScreen` (Role: ui, Lines: 90)
 - **Responsibility**: Two-layer presentation for notification, overlay, units, and battery behavior toggles.

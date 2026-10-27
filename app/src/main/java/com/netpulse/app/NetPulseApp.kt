@@ -1,8 +1,6 @@
 package com.netpulse.app
 
 import android.app.Application
-import android.content.Intent
-import com.netpulse.app.core.Constants
 import com.netpulse.app.core.NetworkMonitor
 import com.netpulse.app.data.repository.PreferencesRepositoryImpl
 import com.netpulse.app.data.repository.UsageRepositoryImpl
@@ -10,13 +8,7 @@ import com.netpulse.app.data.source.LocalDataStore
 import com.netpulse.app.data.source.TrafficDataSource
 import com.netpulse.app.domain.repository.PreferencesRepository
 import com.netpulse.app.domain.repository.UsageRepository
-import com.netpulse.app.service.NetPulseService
 import com.netpulse.app.service.SpeedNotificationManager
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
 
 class NetPulseApp : Application() {
 
@@ -30,8 +22,6 @@ class NetPulseApp : Application() {
         private set
     lateinit var networkMonitor: NetworkMonitor
         private set
-
-    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     override fun onCreate() {
         super.onCreate()

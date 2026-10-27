@@ -6,6 +6,8 @@ import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.view.Gravity
 import android.view.MotionEvent
@@ -18,14 +20,42 @@ import com.netpulse.app.domain.model.SpeedSnapshot
 class FloatingOverlayManager(private val context: Context) {
 
     private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var overlayView: TextView? = null
     private var layoutParams: WindowManager.LayoutParams? = null
     private var isShowing = false
 
     fun canDrawOverlays(): Boolean = Settings.canDrawOverlays(context)
 
+    fun syncVisibility(shouldShow: Boolean, alpha: Float) {
+        mainHandler.post {
+            when {
+                shouldShow && !isShowing -> show(alpha)
+                !shouldShow && isShowing -> hide()
+                isShowing -> applyAlpha(alpha)
+            }
+        }
+    }
+
+    private fun applyAlpha(alpha: Float) {
+        val params = layoutParams ?: return
+        if (params.alpha == alpha) return
+        params.alpha = alpha
+        overlayView?.let {
+            try {
+                windowManager.updateViewLayout(it, params)
+            } catch (_: IllegalArgumentException) {
+                // View already detached; the next reconcile re-adds it.
+            }
+        }
+    }
+
     @SuppressLint("ClickableViewAccessibility")
     fun show(alpha: Float = 0.85f) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post { show(alpha) }
+            return
+        }
         if (isShowing || !canDrawOverlays()) return
 
         val params = WindowManager.LayoutParams(
@@ -81,7 +111,14 @@ class FloatingOverlayManager(private val context: Context) {
         }
 
         overlayView = textView
-        windowManager.addView(textView, params)
+        try {
+            windowManager.addView(textView, params)
+        } catch (_: Exception) {
+            overlayView = null
+            layoutParams = null
+            isShowing = false
+            return
+        }
         isShowing = true
     }
 
@@ -89,10 +126,17 @@ class FloatingOverlayManager(private val context: Context) {
         if (!isShowing) return
         val dl = SpeedFormatter.formatSpeed(speed.downloadBytesPerSec, unitInBits)
         val ul = SpeedFormatter.formatSpeed(speed.uploadBytesPerSec, unitInBits)
-        overlayView?.text = "↓ ${dl.displayString}  ↑ ${ul.displayString}"
+        val text = "↓ ${dl.displayString}  ↑ ${ul.displayString}"
+        mainHandler.post {
+            if (isShowing) overlayView?.text = text
+        }
     }
 
     fun hide() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post { hide() }
+            return
+        }
         if (!isShowing) return
         overlayView?.let {
             try {
@@ -101,6 +145,7 @@ class FloatingOverlayManager(private val context: Context) {
             }
         }
         overlayView = null
+        layoutParams = null
         isShowing = false
     }
 }

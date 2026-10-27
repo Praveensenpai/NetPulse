@@ -39,10 +39,15 @@ private val LightColorScheme = lightColorScheme(
     outline = SamsungLightOutline
 )
 
+/**
+ * Dynamic colour is off by default: the One UI palette is the product's visual
+ * identity, and wallpaper-derived colours flatten the speed accents into
+ * near-identical pastels that make the gauge hard to read.
+ */
 @Composable
 fun NetPulseTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = true,
+    dynamicColor: Boolean = false,
     content: @Composable () -> Unit
 ) {
     val context = LocalContext.current

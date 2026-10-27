@@ -8,6 +8,7 @@ interface PreferencesRepository {
     suspend fun getPreferences(): MeterPreferences
     suspend fun updatePreferences(transform: (MeterPreferences) -> MeterPreferences)
     suspend fun setServiceEnabled(enabled: Boolean)
+    suspend fun setShowNotification(show: Boolean)
     suspend fun setFloatingOverlayEnabled(enabled: Boolean)
     suspend fun setUnitInBits(inBits: Boolean)
     suspend fun setShowUploadSpeed(show: Boolean)

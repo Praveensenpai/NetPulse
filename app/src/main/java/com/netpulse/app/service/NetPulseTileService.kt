@@ -9,7 +9,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 class NetPulseTileService : TileService() {
@@ -28,18 +27,27 @@ class NetPulseTileService : TileService() {
         super.onClick()
         serviceScope.launch {
             val repo = NetPulseApp.instance.preferencesRepository
-            val current = repo.getPreferences()
-            val newEnabled = !current.isServiceEnabled
+            val newEnabled = !repo.getPreferences().isServiceEnabled
             repo.setServiceEnabled(newEnabled)
             updateTileState(newEnabled)
 
-            val serviceIntent = Intent(this@NetPulseTileService, NetPulseService::class.java).apply {
-                action = if (newEnabled) Constants.ACTION_START_SERVICE else Constants.ACTION_STOP_SERVICE
+            val intent = Intent(this@NetPulseTileService, NetPulseService::class.java).apply {
+                action = if (newEnabled) {
+                    Constants.ACTION_START_SERVICE
+                } else {
+                    Constants.ACTION_STOP_SERVICE
+                }
             }
-            if (newEnabled) {
-                startForegroundService(serviceIntent)
-            } else {
-                startService(serviceIntent)
+            // Starting a foreground service from a tile can be refused by the platform
+            // when the app is in the background; never let that become a crash.
+            try {
+                if (newEnabled) {
+                    startForegroundService(intent)
+                } else {
+                    startService(intent)
+                }
+            } catch (_: Exception) {
+                updateTileState(!newEnabled)
             }
         }
     }

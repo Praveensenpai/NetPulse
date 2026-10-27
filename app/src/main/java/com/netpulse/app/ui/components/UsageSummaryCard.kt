@@ -45,7 +45,7 @@ fun UsageSummaryCard(
                     tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(Dimens.iconSizeSm)
                 )
-                Spacer(modifier = Modifier.width(Dimens.xs))
+                Spacer(modifier = Modifier.width(Dimens.sm))
                 Text(
                     text = "Today's Consumption",
                     style = MaterialTheme.typography.titleMedium,
@@ -55,17 +55,19 @@ fun UsageSummaryCard(
             Spacer(modifier = Modifier.height(Dimens.md))
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.spacedBy(Dimens.md)
             ) {
                 UsageItem(
                     label = "Mobile Data",
                     usage = SpeedFormatter.formatDataUsage(dailyUsage.mobileBytes),
-                    icon = Icons.Rounded.SignalCellularAlt
+                    icon = Icons.Rounded.SignalCellularAlt,
+                    modifier = Modifier.weight(1f)
                 )
                 UsageItem(
-                    label = "Wi-Fi Network",
+                    label = "Wi-Fi",
                     usage = SpeedFormatter.formatDataUsage(dailyUsage.wifiBytes),
-                    icon = Icons.Rounded.Wifi
+                    icon = Icons.Rounded.Wifi,
+                    modifier = Modifier.weight(1f)
                 )
             }
         }
@@ -79,28 +81,26 @@ private fun UsageItem(
     icon: ImageVector,
     modifier: Modifier = Modifier
 ) {
-    Row(
-        modifier = modifier,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(Dimens.iconSizeMd)
-        )
-        Spacer(modifier = Modifier.width(Dimens.sm))
-        Column {
+    Column(modifier = modifier) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(Dimens.iconSizeSm)
+            )
+            Spacer(modifier = Modifier.width(Dimens.xs))
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            Text(
-                text = usage,
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface
-            )
         }
+        Spacer(modifier = Modifier.height(Dimens.xs))
+        Text(
+            text = usage,
+            style = MaterialTheme.typography.titleLarge,
+            color = MaterialTheme.colorScheme.onSurface
+        )
     }
 }

@@ -7,50 +7,59 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import com.netpulse.app.core.FormattedSpeed
 
+/**
+ * Renders the status bar speed glyph.
+ *
+ * The platform scales a small icon down to roughly 24dp, so every pixel of the
+ * source bitmap matters. The value and unit share one line ("1.2M") because two
+ * stacked lines left each glyph barely 10dp tall after downscaling.
+ */
 object SpeedIconGenerator {
 
-    private const val ICON_SIZE = 64
-    private val bitmap = Bitmap.createBitmap(ICON_SIZE, ICON_SIZE, Bitmap.Config.ARGB_8888)
-    private val canvas = Canvas(bitmap)
-
-    private val valuePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
-        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-        textAlign = Paint.Align.CENTER
-    }
-
-    private val unitPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
-        typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
-        textAlign = Paint.Align.CENTER
-    }
+    private const val ICON_SIZE = 96
+    private const val MAX_VALUE_WIDTH = 92f
 
     @Synchronized
     fun generateSpeedBitmap(speed: FormattedSpeed): Bitmap {
-        bitmap.eraseColor(Color.TRANSPARENT)
+        // A fresh bitmap per build: the notification holds a reference to this object,
+        // so reusing one buffer mutated icons already posted to the status bar.
+        val bitmap = Bitmap.createBitmap(ICON_SIZE, ICON_SIZE, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
 
-        val valueText = speed.value
-        val unitText = when {
-            speed.unit.startsWith("GB", ignoreCase = true) || speed.unit.startsWith("Gb", ignoreCase = true) -> "G"
-            speed.unit.startsWith("MB", ignoreCase = true) || speed.unit.startsWith("Mb", ignoreCase = true) -> "M"
-            speed.unit.startsWith("KB", ignoreCase = true) || speed.unit.startsWith("Kb", ignoreCase = true) -> "K"
-            else -> "B"
+        val valuePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            textAlign = Paint.Align.CENTER
+            textSize = 56f
+        }
+        // One line ("1.2M") instead of two stacked lines: the platform shrinks a
+        // small icon to ~24dp, which left each of two lines barely 10dp tall.
+        val label = compactValue(speed.value) + unitLetter(speed.unit)
+
+        val widest = valuePaint.measureText(label)
+        if (widest > MAX_VALUE_WIDTH) {
+            valuePaint.textSize *= MAX_VALUE_WIDTH / widest
         }
 
-        // Adjust text size based on character length
-        valuePaint.textSize = when (valueText.length) {
-            1 -> 34f
-            2 -> 30f
-            3 -> 24f
-            else -> 20f
-        }
-        unitPaint.textSize = 18f
-
-        // Draw value in upper half, unit in lower half
-        val centerX = ICON_SIZE / 2f
-        canvas.drawText(valueText, centerX, 32f, valuePaint)
-        canvas.drawText(unitText, centerX, 54f, unitPaint)
+        // Center the single line vertically using the font metrics.
+        val metrics = valuePaint.fontMetrics
+        val baseline = ICON_SIZE / 2f - (metrics.ascent + metrics.descent) / 2f
+        canvas.drawText(label, ICON_SIZE / 2f, baseline, valuePaint)
 
         return bitmap
+    }
+
+    /** Trims decimals so the glyph count never exceeds three characters. */
+    private fun compactValue(value: String): String {
+        if (value.length <= 3) return value
+        val intPart = value.substringBefore('.')
+        return if (intPart.length <= 3) intPart else intPart.take(3)
+    }
+
+    private fun unitLetter(unit: String): String = when {
+        unit.startsWith("G", ignoreCase = true) -> "G"
+        unit.startsWith("M", ignoreCase = true) -> "M"
+        unit.startsWith("K", ignoreCase = true) -> "K"
+        else -> "B"
     }
 }
