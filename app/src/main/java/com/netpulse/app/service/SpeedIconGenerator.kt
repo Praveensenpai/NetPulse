@@ -13,8 +13,8 @@ import com.netpulse.app.core.FormattedSpeed
  *
  * The platform fits the square bitmap inside a ~37 px status-bar slot, so the
  * glyph's on-screen height is bounded by how much of the 96 px canvas the ink
- * fills. A three-character label ("60K") is width-bound, so a condensed face is
- * used to buy cap height without dropping the unit letter.
+ * fills. The font is therefore sized to fill the canvas height, and any excess
+ * width is absorbed by a horizontal scale, which a condensed face tolerates.
  */
 object SpeedIconGenerator {
 
@@ -23,16 +23,19 @@ object SpeedIconGenerator {
     private const val MAX_HEIGHT = 92f
 
     /**
-     * No extra horizontal squeeze.
+     * Tightest horizontal squeeze allowed when a label is too wide.
      *
-     * The typeface is already condensed, so scaling X as well compounded the
-     * compression and made the digits read as vertically stretched. The glyph
-     * keeps its natural aspect ratio.
+     * The font size is now chosen so the digits fill the canvas height, which
+     * makes long labels ("1.8K") wider than the canvas. They are compressed
+     * horizontally instead of being drawn smaller, because height is what the
+     * platform scales down: wasted vertical padding shrinks the whole glyph in
+     * the status bar. This floor keeps four-character labels legible; the
+     * size calculation already backs off so that no label needs to go below it.
      */
-    private const val TEXT_SCALE_X = 1.0f
+    private const val MIN_TEXT_SCALE_X = 0.6f
 
     /**
-     * Worst-case label: three characters, all wide digits.
+     * Worst-case label: four characters, all wide digits plus a unit letter.
      *
      * The font size is computed once from this and never varied per reading.
      * Fitting each label independently made short readings ("50K") render tall
@@ -65,12 +68,14 @@ object SpeedIconGenerator {
             typeface = Typeface.create("sans-serif-condensed", Typeface.BOLD)
             textAlign = Paint.Align.CENTER
             textSize = PROBE_TEXT_SIZE
-            textScaleX = TEXT_SCALE_X
         }
         val label = compactLabel(speed.value, speed.unit)
         // One constant font size for every reading, so the glyph never changes
         // height between "50K" and "400K".
-        paint.textSize = fixedTextSize(paint)
+        paint.textSize = fittedTextSize(paint)
+        // Width is absorbed per label instead of shrinking the font: the digits
+        // keep their full height and only wide readings are compressed.
+        paint.textScaleX = horizontalScale(paint, label)
 
         // Centre on measured ink rather than font metrics so the glyph sits
         // optically centred in the square canvas.
@@ -83,20 +88,40 @@ object SpeedIconGenerator {
     }
 
     /**
-     * Text size that fits the worst-case label, computed once.
+     * Text size that fills the canvas height, computed once.
      *
      * Deriving the size from the worst case rather than the actual reading is
      * what keeps glyph height constant: every label is then drawn at the same
      * size, and shorter labels simply occupy less width.
+     *
+     * The binding constraint is height, not width. Sizing by width left the ink
+     * occupying roughly a quarter of the square canvas, and since the platform
+     * scales the whole canvas into the status-bar slot, that padding shrank the
+     * number on screen. Width is recovered per label by [horizontalScale].
      */
-    private fun fixedTextSize(paint: Paint): Float {
+    private fun fittedTextSize(paint: Paint): Float {
         val probe = Rect()
         paint.getTextBounds(WORST_CASE_LABEL, 0, WORST_CASE_LABEL.length, probe)
         if (probe.width() == 0 || probe.height() == 0) return PROBE_TEXT_SIZE
 
-        val byWidth = MAX_WIDTH / probe.width() * PROBE_TEXT_SIZE
         val byHeight = MAX_HEIGHT / probe.height() * PROBE_TEXT_SIZE
-        return minOf(byWidth, byHeight)
+        // Back off so the worst case never needs more squeeze than the floor.
+        val byWidth = MAX_WIDTH / probe.width() * PROBE_TEXT_SIZE / MIN_TEXT_SCALE_X
+        return minOf(byHeight, byWidth)
+    }
+
+    /**
+     * Horizontal scale that fits [label] into the canvas at the current size.
+     *
+     * Short labels are drawn untouched; only readings wider than the canvas are
+     * compressed, so the glyph height stays constant across every reading.
+     */
+    private fun horizontalScale(paint: Paint, label: String): Float {
+        val probe = Rect()
+        paint.getTextBounds(label, 0, label.length, probe)
+        if (probe.width() == 0) return 1f
+        val scale = MAX_WIDTH / probe.width()
+        return scale.coerceIn(MIN_TEXT_SCALE_X, 1f)
     }
 
     /**
