@@ -119,14 +119,18 @@ class AppUsageTracker(private val dataSource: AppUsageDataSource) {
                 decayedRate(packageName, now)
             }
 
-            apps.add(
-                AppUsage(
-                    packageName = packageName,
-                    label = dataSource.labelFor(packageName),
-                    totalBytes = total,
-                    bytesPerSec = liveRate
+            // Zero-byte packages are kept in `totals` (they are real,
+            // measured values) but must not be listed in the UI.
+            if (total > 0L) {
+                apps.add(
+                    AppUsage(
+                        packageName = packageName,
+                        label = dataSource.labelFor(packageName),
+                        totalBytes = total,
+                        bytesPerSec = liveRate
+                    )
                 )
-            )
+            }
         }
 
         val logGrew = appendToLog(deltas, now)

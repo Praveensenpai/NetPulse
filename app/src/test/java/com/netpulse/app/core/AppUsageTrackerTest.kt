@@ -63,6 +63,24 @@ class AppUsageTrackerTest {
     }
 
     @Test
+    fun mergedTotals_zeroFromSweepSupersedesCarried() {
+        // A package swept and measured at 0 B must not keep its carried
+        // baseline; that is what left a stale 223 MB total in the snapshot.
+        val previous = mapOf("YouTube" to 223_837_537L)
+        val fresh = mapOf("YouTube" to 2_137_098L)
+        val merged = AppUsageTracker.mergedTotals(previous, fresh, carry = true)
+        assertThat(merged).containsExactly("YouTube", 2_137_098L)
+    }
+
+    @Test
+    fun mergedTotals_zeroValueIsStillAFreshMeasurement() {
+        val previous = mapOf("YouTube" to 5_000L)
+        val fresh = mapOf("YouTube" to 0L)
+        val merged = AppUsageTracker.mergedTotals(previous, fresh, carry = true)
+        assertThat(merged).containsExactly("YouTube", 0L)
+    }
+
+    @Test
     fun mergedTotals_freshValueSupersedesCarried() {
         val previous = mapOf("YouTube" to 10_000L)
         val fresh = mapOf("YouTube" to 11_500L)

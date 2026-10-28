@@ -46,7 +46,8 @@ class AppUsageDataSource(private val context: Context) {
      * a 12 MB transfer during downtime went missing. Device-verified before the
      * guard: the snapshot taken 10 s after start had no YouTube entry at all.
      */
-    internal fun sweepComplete(): Boolean = pendingSweep.isEmpty() && sweepTotals.isNotEmpty()
+    internal fun sweepComplete(): Boolean =
+        pendingSweep.isEmpty() && sweepTotals.isNotEmpty()
 
     fun hasUsageAccess(): Boolean {
         val ops = context.getSystemService(AppOpsManager::class.java) ?: return false
@@ -93,8 +94,7 @@ class AppUsageDataSource(private val context: Context) {
         // for the full sweep to come back around.
         for (packageName in sweepTotals.keys.toList()) {
             val uid = uidForPackage(packageName) ?: continue
-            val bytes = todayBytes(manager, uid, dayStart, queryEnd)
-            recordTotal(sweepTotals, packageName, bytes)
+            sweepTotals[packageName] = todayBytes(manager, uid, dayStart, queryEnd)
         }
 
         // Discovery is the expensive part (~400 IPC for every UID), so it is
@@ -108,8 +108,7 @@ class AppUsageDataSource(private val context: Context) {
         val batch = pendingSweep.entries.take(SWEEP_SLICE)
         for (entry in batch) {
             val uid = entry.value.toInt()
-            val bytes = todayBytes(manager, uid, dayStart, queryEnd)
-            recordTotal(sweepTotals, entry.key, bytes)
+            sweepTotals[entry.key] = todayBytes(manager, uid, dayStart, queryEnd)
             pendingSweep.remove(entry.key)
         }
 
@@ -123,6 +122,11 @@ class AppUsageDataSource(private val context: Context) {
                 if (value > known) sweepTotals[key] = value
             }
         }
+        // Returned unfiltered on purpose. Callers must be able to tell a
+        // package that was swept and has 0 B from one that has not been swept
+        // yet; filtering here made every zero-byte app look unswept, so the
+        // restart carry kept its stale baseline forever. The tracker filters
+        // zero-byte packages out of the UI rows itself.
         return sweepTotals.toMap()
     }
 
@@ -352,21 +356,5 @@ class AppUsageDataSource(private val context: Context) {
         internal fun sinceBaseline(all: Long, baseline: Long): Long? =
             if (all < baseline) null else all - baseline
 
-        /**
-         * Records [bytes] for [key], dropping the entry when the figure is 0.
-         *
-         * A zero is not always "no traffic": the re-baseline poll returns 0
-         * while it re-anchors a UID whose history was trimmed. Keeping the old
-         * entry then would display a total computed against a baseline that no
-         * longer exists, so the row is cleared instead and reappears once real
-         * bytes are measured again.
-         */
-        internal fun recordTotal(
-            totals: MutableMap<String, Long>,
-            key: String,
-            bytes: Long
-        ) {
-            if (bytes > 0L) totals[key] = bytes else totals.remove(key)
-        }
     }
 }
