@@ -27,6 +27,27 @@ class AppUsageDataSource(private val context: Context) {
     private var baselineDay = 0L
     private var baselineClosed = false
 
+    /**
+     * True when this process has captured midnight baselines, so its totals are
+     * baseline-subtracted rather than whole-bucket sums.
+     *
+     * A restart usually lands outside the baseline window, so the new process
+     * reports whole-bucket sums and the two modes must not be mixed when a
+     * snapshot is restored across a restart.
+     */
+    internal fun usesBaseline(): Boolean = baselines.isNotEmpty()
+
+    /**
+     * True when the per-UID sweep has queried every installed app at least once
+     * today, so the current totals map is complete.
+     *
+     * Only a complete map is worth persisting as a restart baseline: a partial
+     * map silently drops every app the sweep had not reached yet, which is how
+     * a 12 MB transfer during downtime went missing. Device-verified before the
+     * guard: the snapshot taken 10 s after start had no YouTube entry at all.
+     */
+    internal fun sweepComplete(): Boolean = pendingSweep.isEmpty() && sweepTotals.isNotEmpty()
+
     fun hasUsageAccess(): Boolean {
         val ops = context.getSystemService(AppOpsManager::class.java) ?: return false
         val mode = ops.unsafeCheckOpNoThrow(
@@ -275,15 +296,7 @@ class AppUsageDataSource(private val context: Context) {
         packageMapBuiltAt = now
     }
 
-    private fun startOfTodayMs(): Long {
-        val calendar = Calendar.getInstance().apply {
-            set(Calendar.HOUR_OF_DAY, 0)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }
-        return calendar.timeInMillis
-    }
+    private fun startOfTodayMs(): Long = startOfDayMs(System.currentTimeMillis())
 
     companion object {
         private const val TAG = "AppUsageDataSource"
@@ -298,6 +311,18 @@ class AppUsageDataSource(private val context: Context) {
         // bucket that ends before local midnight.
         private const val BUCKET_PAD_MS = 43_200_000L
         private const val BASELINE_GRACE_MS = 120_000L
+
+        /** Local midnight for the day containing [nowMs]. */
+        internal fun startOfDayMs(nowMs: Long): Long {
+            val calendar = Calendar.getInstance().apply {
+                timeInMillis = nowMs
+                set(Calendar.HOUR_OF_DAY, 0)
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }
+            return calendar.timeInMillis
+        }
 
         /** True while a midnight-crossing baseline is still worth capturing. */
         internal fun withinBaselineWindow(nowMs: Long, dayStartMs: Long): Boolean =

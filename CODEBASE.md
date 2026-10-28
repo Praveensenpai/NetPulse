@@ -70,7 +70,7 @@ Kernel (/proc/net/dev) ──> TrafficDataSource ──> NetPulseService
   ```
 - **Consumers**: `NetPulseService`, `HomeViewModel`.
 
-### `com.netpulse.app.data.source.AppUsageDataSource` (Role: data, Lines: 347)
+### `com.netpulse.app.data.source.AppUsageDataSource` (Role: data, Lines: 372)
 - **Responsibility**: Per-app byte totals since local midnight via `NetworkStatsManager`. Walks every installed UID with `queryDetailsForUid` (a whole-day `queryDetails` is silently capped at 100 rows, and Samsung records streaming traffic in the FOREGROUND stats set that `querySummary` omits). Discovery is spread across polls in slices of `SWEEP_SLICE`; apps already reporting traffic are refreshed every poll so their totals stay live. Queries end at `now + BUCKET_PAD_MS`, not `now`: `NetworkStatsManager` returns a bucket only when it lies entirely inside `[start, end]`, so the open bucket containing the current moment is otherwise invisible (device-verified: `day..now` returned 0 rows, `day..now+2h` returned the live bucket). Buckets are filtered through `countsTowardDay(end, dayStart)`, so the pad cannot leak yesterday into today. That predicate keeps a bucket that straddles midnight whole, because `NetworkStats.Bucket` exposes whole-bucket totals only; the overcount is bounded by one bucketDuration and is covered by `AppUsageDataSourceTest`. When the service is already running near midnight (`withinBaselineWindow`), it snapshots each UID's cumulative total and reports `all - baseline` instead, which removes the straddle overcount exactly. The snapshotting visit itself reports 0 rather than the whole-bucket sum, so the figure grows from zero instead of jumping to an inflated value and collapsing on the next poll. If the service started later, it falls back to whole-bucket sums so earlier bytes are never subtracted away. `sinceBaseline(all, baseline)` returns null when netstats trims the history a baseline was taken against (or a reboot resets the counters); the UID is then re-baselined on the current cumulative total instead of being clamped to 0 B until the next midnight. `recordTotal(totals, key, bytes)` is the only write path into the result map: it stores positive values and removes the key on zero, so the re-baseline poll (which returns 0) clears the row instead of leaving a total computed against the discarded baseline. If the per-UID pass yields nothing, a chunked `queryDetails` fallback runs at most once per `FALLBACK_INTERVAL_MS`, subdividing any window that returns `ROW_CAP` rows so truncation cannot occur.
 - **Public Functions**:
   ```kotlin
@@ -80,7 +80,7 @@ Kernel (/proc/net/dev) ──> TrafficDataSource ──> NetPulseService
   ```
 - **Consumers**: `AppUsageTracker`.
 
-### `com.netpulse.app.core.AppUsageTracker` (Role: core, Lines: 154)
+### `com.netpulse.app.core.AppUsageTracker` (Role: core, Lines: 269)
 - **Responsibility**: Converts per-app totals into live rates and a bounded minute-resolution log. Deltas are clamped (NetworkStats jitters) and reported rates decay over `RATE_DECAY_MS` instead of dropping instantly.
 - **Public Symbols**:
   ```kotlin
@@ -122,7 +122,7 @@ Kernel (/proc/net/dev) ──> TrafficDataSource ──> NetPulseService
   ```
 - **Consumers**: `NetPulseService`, `HomeViewModel`.
 
-### `com.netpulse.app.data.source.LocalDataStore` (Role: data, Lines: 85)
+### `com.netpulse.app.data.source.LocalDataStore` (Role: data, Lines: 203)
 - **Responsibility**: DataStore Preferences manager for application settings and daily usage history.
 - **Public Functions**:
   ```kotlin
@@ -133,7 +133,7 @@ Kernel (/proc/net/dev) ──> TrafficDataSource ──> NetPulseService
   ```
 - **Consumers**: `PreferencesRepositoryImpl`, `UsageRepositoryImpl`.
 
-### `com.netpulse.app.service.NetPulseService` (Role: service, Lines: 145)
+### `com.netpulse.app.service.NetPulseService` (Role: service, Lines: 246)
 - **Responsibility**: Foreground service managing low-overhead 1Hz polling loop with screen-off pause.
 - **Public Lifecycle**: `onCreate()`, `onStartCommand()`, `onDestroy()`.
 - **Side Effects**: System notification updates, window overlay layout mutations, DataStore writes.
@@ -192,6 +192,7 @@ Kernel (/proc/net/dev) ──> TrafficDataSource ──> NetPulseService
 ```
 
 ## 6. Recent Iteration Changes
+- **2026-10-28 (g)**: Restart-gap recovery. Bytes moved while the service was down were silently dropped: the first poll after a start set `lastTotals` with no previous value, so every delta was 0. The tracker now persists a per-package totals snapshot (`AppUsageSnapshot(atMs, usesBaseline, totals)`) and adopts it on the first poll when `isAdoptable` passes (same accounting mode, not in the future, within `RECOVERY_WINDOW_MS = 300_000`, not before local midnight). Two follow-on defects found on device: `lastTotals = totals` replaced the adopted baseline with the first partial 16-UID sweep (fixed with a `CARRY_MS` merge window so unswept packages keep their baseline), and snapshots were written before the sweep had covered every app, so the persisted map was incomplete (fixed by gating on `sweepComplete()`). Log and snapshot are written in one DataStore edit so a crash cannot desync them. Device-verified byte-exact: 12,000,206 B moved while the app was dead appeared as `08:04 YouTube 12,465,112 B`, matching the netstats delta of 12,465,112 B for UID 10139. 40 unit tests green (`isAdoptable` + `mergedTotals`).
 - **2026-10-28 (f)**: Stale-row fix. The `if (bytes > 0L)` guards at both result-map writes meant the re-baseline poll's deliberate 0 was dropped, leaving a total computed against the baseline v1.3.2 had just discarded (stale total + decaying rate). Extracted `recordTotal(totals, key, bytes)` which stores positive values and removes the key on zero; 3 tests. 32 unit tests green, lint clean, shipped as v1.3.3.
 - **2026-10-28 (e)**: Baseline reset guard. `queryUid(0L, queryEnd)` sums all retained history, and netstats trims old buckets, so `all` can fall below a stored midnight baseline; the previous `coerceAtLeast(0L)` then froze that app at 0 B until the next midnight. Extracted `sinceBaseline(all, baseline): Long?` (null on regression) with 3 tests; the caller re-baselines on the current total and reports 0 for that poll. Also moved the `countsTowardDay` KDoc off `withinBaselineWindow`. 29 unit tests green, lint clean, device-verified live rows.
 - **2026-10-13**: Initialized complete NetPulse architecture (core, domain, data, service, Compose UI, unit tests, GitHub CI/Release workflows).

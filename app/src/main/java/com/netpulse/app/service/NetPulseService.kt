@@ -28,6 +28,7 @@ class NetPulseService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var pollingJob: Job? = null
     private var isScreenOn = true
+    private var lastSnapshotSavedAt = 0L
     private var currentPreferences = MeterPreferences()
     private var todayUsage = DailyUsage(dateKey = "")
 
@@ -145,13 +146,16 @@ class NetPulseService : Service() {
         val app = NetPulseApp.instance
         app.trafficDataSource.reset()
 
-        serviceScope.launch {
+        pollingJob = serviceScope.launch {
+            // Seed before the first poll: the poll loop reads the log and the
+            // snapshot on its very first iteration, so loading them from a
+            // sibling coroutine would race and lose the restart recovery.
             app.localDataStore.observeAppUsageLog()
                 .firstOrNull()
                 ?.let(app.appUsageTracker::seedLog)
-        }
+            app.localDataStore.loadAppUsageSnapshot()
+                ?.let(app.appUsageTracker::seedSnapshot)
 
-        pollingJob = serviceScope.launch {
             while (isActive) {
                 val snapshot = app.trafficDataSource.sample()
                 TelemetryManager.updateSpeed(snapshot)
@@ -181,11 +185,29 @@ class NetPulseService : Service() {
         }
     }
 
-    /** Polls per-app counters; persisted only when the minute log actually grew. */
+    /**
+     * Polls per-app counters and persists the tracker state.
+     *
+     * The snapshot is refreshed alongside the log so a restart has a recent
+     * reference point, but only every [SNAPSHOT_INTERVAL_MS]: the poll loop runs
+     * at 1 Hz and a DataStore write that often is wasted IO.
+     */
     private suspend fun pollAppUsage(app: NetPulseApp) {
-        if (app.appUsageTracker.poll()) {
-            app.localDataStore.saveAppUsageLog(app.appUsageTracker.log.value)
+        val now = System.currentTimeMillis()
+        val grew = app.appUsageTracker.poll()
+        val snapshot = app.appUsageTracker.currentSnapshot(now)
+        val snapshotDue = snapshot != null && now - lastSnapshotSavedAt >= SNAPSHOT_INTERVAL_MS
+
+        when {
+            // A missing snapshot only means the sweep has not covered every app
+            // yet. The log still has to be written, or early rows are lost.
+            grew && snapshot != null ->
+                app.localDataStore.saveAppUsageState(app.appUsageTracker.log.value, snapshot)
+            grew -> app.localDataStore.saveAppUsageLog(app.appUsageTracker.log.value)
+            snapshotDue -> app.localDataStore.saveAppUsageSnapshot(snapshot!!)
+            else -> return
         }
+        lastSnapshotSavedAt = now
     }
 
     private fun pushNotification(snapshot: SpeedSnapshot) {
@@ -216,4 +238,9 @@ class NetPulseService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    private companion object {
+        /** Snapshot cadence; independent of the 1 Hz poll loop. */
+        const val SNAPSHOT_INTERVAL_MS = 60_000L
+    }
 }
