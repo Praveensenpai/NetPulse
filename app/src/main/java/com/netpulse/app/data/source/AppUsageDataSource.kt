@@ -172,6 +172,8 @@ class AppUsageDataSource(private val context: Context) {
      *
      * If no baseline was captured in time (service started later in the day)
      * this falls back to the whole-bucket sum, which is the previous behavior.
+     * The first visit after midnight only records the baseline, so the figure
+     * grows from zero instead of jumping up and collapsing on the next poll.
      */
     private fun todayBytes(
         manager: NetworkStatsManager,
@@ -181,12 +183,14 @@ class AppUsageDataSource(private val context: Context) {
     ): Long {
         val base = baselines[uid]
         if (base == null) {
-            val whole = queryUid(manager, uid, dayStart, queryEnd)
-            if (baselineClosed) return whole
+            if (baselineClosed) return queryUid(manager, uid, dayStart, queryEnd)
+            // First visit after midnight: record the cumulative total and
+            // report nothing yet. Returning the whole-bucket sum here would
+            // include the pre-midnight part of the straddling bucket, and the
+            // next poll would drop back to the exact figure, making the
+            // displayed total collapse from a large inflated value to near zero.
             baselines[uid] = queryUid(manager, uid, 0L, queryEnd)
-            // First visit after midnight: report the whole-bucket sum once so
-            // nothing disappears, then switch to the exact difference.
-            return whole
+            return 0L
         }
         val all = queryUid(manager, uid, 0L, queryEnd)
         return (all - base).coerceAtLeast(0L)
