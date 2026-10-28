@@ -32,7 +32,7 @@ object SpeedIconGenerator {
      * the status bar. This floor keeps four-character labels legible; the
      * size calculation already backs off so that no label needs to go below it.
      */
-    private const val MIN_TEXT_SCALE_X = 0.6f
+    private const val MIN_TEXT_SCALE_X = 0.5f
 
     /**
      * Worst-case label: four characters, all wide digits plus a unit letter.
