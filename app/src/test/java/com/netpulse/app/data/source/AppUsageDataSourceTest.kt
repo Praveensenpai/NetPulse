@@ -48,6 +48,21 @@ class AppUsageDataSourceTest {
         assertThat(AppUsageDataSource.withinBaselineWindow(dayStart + 16 * 3_600_000L, dayStart)).isFalse()
     }
 
+    @Test
+    fun sinceBaseline_reportsDeltaWhenHistoryGrew() {
+        assertThat(AppUsageDataSource.sinceBaseline(2_082_550L, 2_080_000L)).isEqualTo(2_550L)
+    }
+
+    @Test
+    fun sinceBaseline_reportsZeroWhenNothingChanged() {
+        assertThat(AppUsageDataSource.sinceBaseline(2_080_000L, 2_080_000L)).isEqualTo(0L)
+    }
+
+    @Test
+    fun sinceBaseline_returnsNullWhenBaselineIsStale() {
+        assertThat(AppUsageDataSource.sinceBaseline(1_000L, 2_080_000L)).isNull()
+    }
+
     /**
      * Documents the known overcount: a bucket spanning midnight is kept whole,
      * because the framework gives no way to split it.

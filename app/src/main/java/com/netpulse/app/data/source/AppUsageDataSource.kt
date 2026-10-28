@@ -193,7 +193,15 @@ class AppUsageDataSource(private val context: Context) {
             return 0L
         }
         val all = queryUid(manager, uid, 0L, queryEnd)
-        return (all - base).coerceAtLeast(0L)
+        val since = sinceBaseline(all, base)
+        if (since == null) {
+            // The baseline now points past the retained history. Re-baseline on
+            // the current cumulative total so this app keeps reporting instead
+            // of sitting at 0 B until tomorrow.
+            baselines[uid] = all
+            return 0L
+        }
+        return since
     }
 
     private fun queryUid(
@@ -291,6 +299,10 @@ class AppUsageDataSource(private val context: Context) {
         private const val BUCKET_PAD_MS = 43_200_000L
         private const val BASELINE_GRACE_MS = 120_000L
 
+        /** True while a midnight-crossing baseline is still worth capturing. */
+        internal fun withinBaselineWindow(nowMs: Long, dayStartMs: Long): Boolean =
+            nowMs - dayStartMs <= BASELINE_GRACE_MS
+
         /**
          * A bucket counts toward today when it ends after local midnight.
          *
@@ -299,11 +311,20 @@ class AppUsageDataSource(private val context: Context) {
          * be attributed separately. Such a bucket is counted in full, which can
          * overstate today's first bucket by up to one bucketDuration of yesterday.
          */
-        /** True while a midnight-crossing baseline is still worth capturing. */
-        internal fun withinBaselineWindow(nowMs: Long, dayStartMs: Long): Boolean =
-            nowMs - dayStartMs <= BASELINE_GRACE_MS
-
         internal fun countsTowardDay(bucketEndMs: Long, dayStartMs: Long): Boolean =
             bucketEndMs > dayStartMs
+
+        /**
+         * Bytes accrued since [baseline] was taken, or null when [all] fell
+         * below it.
+         *
+         * A drop means netstats trimmed the buckets the baseline was taken
+         * against (history rotation, or a reboot that reset the counters). The
+         * stored baseline is then meaningless and the caller must re-baseline;
+         * subtracting it anyway and clamping at zero would freeze the app at
+         * 0 B until the next midnight.
+         */
+        internal fun sinceBaseline(all: Long, baseline: Long): Long? =
+            if (all < baseline) null else all - baseline
     }
 }
