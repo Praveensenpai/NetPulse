@@ -73,7 +73,7 @@ class AppUsageDataSource(private val context: Context) {
         for (packageName in sweepTotals.keys.toList()) {
             val uid = uidForPackage(packageName) ?: continue
             val bytes = todayBytes(manager, uid, dayStart, queryEnd)
-            if (bytes > 0L) sweepTotals[packageName] = bytes
+            recordTotal(sweepTotals, packageName, bytes)
         }
 
         // Discovery is the expensive part (~400 IPC for every UID), so it is
@@ -88,7 +88,7 @@ class AppUsageDataSource(private val context: Context) {
         for (entry in batch) {
             val uid = entry.value.toInt()
             val bytes = todayBytes(manager, uid, dayStart, queryEnd)
-            if (bytes > 0L) sweepTotals[entry.key] = bytes
+            recordTotal(sweepTotals, entry.key, bytes)
             pendingSweep.remove(entry.key)
         }
 
@@ -326,5 +326,22 @@ class AppUsageDataSource(private val context: Context) {
          */
         internal fun sinceBaseline(all: Long, baseline: Long): Long? =
             if (all < baseline) null else all - baseline
+
+        /**
+         * Records [bytes] for [key], dropping the entry when the figure is 0.
+         *
+         * A zero is not always "no traffic": the re-baseline poll returns 0
+         * while it re-anchors a UID whose history was trimmed. Keeping the old
+         * entry then would display a total computed against a baseline that no
+         * longer exists, so the row is cleared instead and reappears once real
+         * bytes are measured again.
+         */
+        internal fun recordTotal(
+            totals: MutableMap<String, Long>,
+            key: String,
+            bytes: Long
+        ) {
+            if (bytes > 0L) totals[key] = bytes else totals.remove(key)
+        }
     }
 }

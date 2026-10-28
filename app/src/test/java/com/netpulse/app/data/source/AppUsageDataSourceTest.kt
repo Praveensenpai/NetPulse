@@ -63,6 +63,28 @@ class AppUsageDataSourceTest {
         assertThat(AppUsageDataSource.sinceBaseline(1_000L, 2_080_000L)).isNull()
     }
 
+    @Test
+    fun recordTotal_storesPositiveValue() {
+        val totals = HashMap<String, Long>()
+        AppUsageDataSource.recordTotal(totals, "YouTube", 2_550L)
+        assertThat(totals).containsEntry("YouTube", 2_550L)
+    }
+
+    @Test
+    fun recordTotal_dropsStaleEntryOnZero() {
+        val totals = HashMap<String, Long>()
+        totals["YouTube"] = 9_999L
+        AppUsageDataSource.recordTotal(totals, "YouTube", 0L)
+        assertThat(totals).doesNotContainKey("YouTube")
+    }
+
+    @Test
+    fun recordTotal_ignoresZeroForUnknownKey() {
+        val totals = HashMap<String, Long>()
+        AppUsageDataSource.recordTotal(totals, "ReVanced", 0L)
+        assertThat(totals).isEmpty()
+    }
+
     /**
      * Documents the known overcount: a bucket spanning midnight is kept whole,
      * because the framework gives no way to split it.
