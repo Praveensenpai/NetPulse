@@ -80,14 +80,15 @@ Kernel (/proc/net/dev) ──> TrafficDataSource ──> NetPulseService
   ```
 - **Consumers**: `AppUsageTracker`.
 
-### `com.netpulse.app.core.AppUsageTracker` (Role: core, Lines: 273)
-- **Responsibility**: Converts per-app totals into live rates and a bounded minute-resolution log. Deltas are clamped (NetworkStats jitters) and reported rates decay over `RATE_DECAY_MS` instead of dropping instantly.
+### `com.netpulse.app.core.AppUsageTracker` (Role: core, Lines: 353)
+- **Responsibility**: Converts per-app totals into live rates and a bounded minute-resolution log. Deltas are clamped (NetworkStats jitters) and reported rates decay over `RATE_DECAY_MS` instead of dropping instantly. The live list is seeded from the persisted log on the first poll and holds each seed for `SEED_CARRY_MS` (180 s) until the sweep reports a positive total, so a restart does not show an empty card. `seedTotals` / `seededRows` are pure companion functions.
 - **Public Symbols**:
   ```kotlin
   val liveApps: StateFlow<List<AppUsage>>       // sorted by bytesPerSec
   val log: StateFlow<List<UsageLogEntry>>       // MAX_LOG_ENTRIES = 300
   fun hasUsageAccess(): Boolean
   fun seedLog(entries: List<UsageLogEntry>)     // restore persisted log on start
+  fun seedTotals(log: List<UsageLogEntry>, dayStartMs: Long): Map<String, Long>
   fun reset()
   fun poll(): Boolean                            // true when the log grew
   ```
@@ -200,6 +201,7 @@ Kernel (/proc/net/dev) ──> TrafficDataSource ──> NetPulseService
 ```
 
 ## 6. Recent Iteration Changes
+- **2026-11-01**: Live App Usage card showed nothing for the first minute after a restart. Not a stuck sweep: `NetworkStatsManager` publishes per-UID buckets lazily, so the first polls return package keys with 0 bytes and the `total > 0` filter hides them, leaving "Waiting for the first sample…". Fix: `NetPulseService.startMonitoring()` seeds the tracker from today's persisted log before the poll loop; `AppUsageTracker` holds each seed for `SEED_CARRY_MS = 180_000` and drops it only when the sweep reports a **positive** total (a presence test would drop every seed on the first 0-byte sweep, which the first implementation did and the device caught). Extracted `seedTotals(log, dayStartMs)` and `seededRows(seeded, measured)` as pure companion functions so the rule is unit-testable. 10 unit tests green, lint 0 errors, device proof: 5 s after restart the card listed 8 rows at `0 B/s` matching the `12:00` log entries, where the previous build showed the waiting placeholder.
 - **2026-10-28 (k)**: `MIN_TEXT_SCALE_X` lowered 0.6 -> 0.5 to close the last of the glyph height gap. At 0.6 the font was still width-bound by the squeeze floor, capping ink at 24 px against a 28 px clock. At 0.5 the size term `byWidth / MIN_TEXT_SCALE_X` rises to ~94 units, so the worst case only needs the floor itself. Measured on `emulator-5554`, eight frames mid-transfer, same crop and 35% threshold: ink 38-39 x 28 px, constant height, level with the clock's 28 px cap height and double the original 14 px. The four-character `2.8M` was checked at 7x: decimal point survives as a distinct sliver, `2` counter and `M` apex stay open, no clipping. 0.5 is the floor; 0.37 (true height-bound) would crush the decimal.
 - **2026-10-28 (j)**: Status-bar glyph was width-bound. `fixedTextSize` sized the font so the worst case `000B` fit `MAX_WIDTH`, which left the ink filling only ~27-41% of the 96 px canvas; the platform scales that padded square into the ~37 px slot, so the number rendered at half the clock's cap height. `fittedTextSize` now takes `min(byHeight, byWidth / MIN_TEXT_SCALE_X)`, sizing from `MAX_HEIGHT` first, and `horizontalScale` squeezes each label toward the 0.6 floor. Measured on `emulator-5554` at the same crop and 35% threshold: `0B` went 19x14 -> 32x24 px, `3.3M` renders 39x24 px, i.e. height is constant at 24 px across label lengths and now 86% of the clock's 28 px instead of 50%. Tests and lint green.
 - **2026-10-29 (i)**: Midnight-baseline subtraction exercised live for the first time, on a disposable AVD (`midnight_probe`, since deleted) so clock manipulation could not contaminate `habit_emu`'s netstats. Sequence: app running at 23:55, 12,000,206 B fetched (log row 25,386 B, snapshot `usesBaseline=0`), clock advanced past midnight with the service alive, baseline captured, then 12,000,206 B fetched again. Result: snapshot header flipped to `usesBaseline=1`, YouTube's total reset to 0 on the capture visit (no inflated-then-collapsed jump), and it accumulated to 14,541,050 B = 12,457,300 + 2,083,750, excluding the 12,573,160 B pre-midnight sum. Bracketed post-midnight fetch matched netstats byte-exactly (2,083,750 B). Note: after a restart past `BASELINE_GRACE_MS` the app correctly drops back to `usesBaseline=0`; on the probe that showed 0 B because every netstats bucket was still stamped `st=1793167200` (bucket rotation was anchored at boot with the pre-jump clock), so the whole-bucket fallback dropped them all. That is a clock-jump artifact, not a defect: a real midnight yields a bucket straddling the boundary, which `countsTowardDay` keeps.

@@ -30,6 +30,8 @@ class AppUsageTracker(private val dataSource: AppUsageDataSource) {
     private val rateHold = HashMap<String, Hold>()
     private var pendingSnapshot: AppUsageSnapshot? = null
     private var carryUntilMs = 0L
+    private var seededTotals: Map<String, Long> = emptyMap()
+    private var seedUntilMs = 0L
 
     private data class Hold(val bytesPerSec: Long, val atMs: Long)
 
@@ -73,6 +75,8 @@ class AppUsageTracker(private val dataSource: AppUsageDataSource) {
         rateHold.clear()
         pendingSnapshot = null
         carryUntilMs = 0L
+        seededTotals = emptyMap()
+        seedUntilMs = 0L
         _liveApps.value = emptyList()
     }
 
@@ -105,6 +109,15 @@ class AppUsageTracker(private val dataSource: AppUsageDataSource) {
 
         val deltas = HashMap<String, Long>()
         val apps = ArrayList<AppUsage>(totals.size)
+        // netstats publishes buckets lazily, so right after a start the sweep
+        // has nothing for most apps and the live list looks empty next to a
+        // full usage log. Seed it from the persisted log and hold the seed
+        // until the sweep reports each package, or until SEED_CARRY_MS passes.
+        if (firstPoll) {
+            seededTotals = seedTotalsFromLog(now)
+            seedUntilMs = now + SEED_CARRY_MS
+        }
+        val carrySeed = now < seedUntilMs
 
         for ((packageName, total) in totals) {
             val previous = lastTotals[packageName]
@@ -128,6 +141,25 @@ class AppUsageTracker(private val dataSource: AppUsageDataSource) {
                         label = dataSource.labelFor(packageName),
                         totalBytes = total,
                         bytesPerSec = liveRate
+                    )
+                )
+            }
+        }
+
+        // Seeded rows keep the card honest until the sweep reports a real
+        // measurement. Presence in `totals` is not enough to drop a seed:
+        // netstats returns the package key with 0 bytes long before it
+        // publishes the bucket, and dropping on key presence made the card
+        // empty right after a start.
+        if (carrySeed) {
+            seededTotals = seededRows(seededTotals, totals)
+            for ((packageName, total) in seededTotals) {
+                apps.add(
+                    AppUsage(
+                        packageName = packageName,
+                        label = dataSource.labelFor(packageName),
+                        totalBytes = total,
+                        bytesPerSec = 0L
                     )
                 )
             }
@@ -173,6 +205,17 @@ class AppUsageTracker(private val dataSource: AppUsageDataSource) {
             carryUntilMs = nowMs + CARRY_MS
         }
     }
+
+    /**
+     * Today's per-package bytes, summed from the persisted log.
+     *
+     * Only consulted on the first poll after a start. netstats publishes
+     * per-UID buckets lazily, so for the first seconds the sweep map holds a
+     * handful of packages while the log already knows the whole day. Seeding
+     * from it keeps the live card from reading as "you only used one app".
+     */
+    private fun seedTotalsFromLog(nowMs: Long): Map<String, Long> =
+        seedTotals(_log.value, AppUsageDataSource.startOfDayMs(nowMs))
 
     private fun decayedRate(packageName: String, now: Long): Long {
         val hold = rateHold[packageName] ?: return 0L
@@ -242,6 +285,39 @@ class AppUsageTracker(private val dataSource: AppUsageDataSource) {
             return true
         }
 
+        /**
+         * Seeded rows that still stand in for a package the sweep has not
+         * measured yet.
+         *
+         * A package is only superseded once the sweep reports a positive
+         * total. Testing key presence instead dropped every seed on the first
+         * poll, because netstats lists the UID with 0 bytes before the bucket
+         * is published, which left the live card empty after a restart.
+         */
+        internal fun seededRows(
+            seeded: Map<String, Long>,
+            measured: Map<String, Long>
+        ): Map<String, Long> =
+            seeded.filter { (packageName, total) ->
+                total > 0L && (measured[packageName] ?: 0L) <= 0L
+            }
+
+        /**
+         * Sums today's persisted log rows into per-package totals.
+         *
+         * Used only to seed the live list on the first poll after a start,
+         * when netstats has not yet published per-UID buckets. Rows from before
+         * [dayStartMs] belong to yesterday's counters and are excluded.
+         */
+        internal fun seedTotals(log: List<UsageLogEntry>, dayStartMs: Long): Map<String, Long> {
+            val out = HashMap<String, Long>()
+            for (entry in log) {
+                if (entry.minuteMs < dayStartMs || entry.bytes <= 0L) continue
+                out[entry.packageName] = (out[entry.packageName] ?: 0L) + entry.bytes
+            }
+            return out
+        }
+
         // Deliberately short. A longer window would fold an unbounded amount of
         // traffic into a single minute row, which misreports when the bytes
         // were actually used. Snapshots are written every 60 s, so a genuine
@@ -250,6 +326,10 @@ class AppUsageTracker(private val dataSource: AppUsageDataSource) {
         // Comfortably longer than one full sweep (~400 UIDs at SWEEP_SLICE per
         // poll), so every carried baseline gets a chance to be superseded.
         private const val CARRY_MS = 180_000L
+        // How long a seeded live row may stand in for a package the sweep has
+        // not reported yet. netstats can take minutes to publish a bucket, so
+        // this is generous; a real measurement always replaces it sooner.
+        private const val SEED_CARRY_MS = 180_000L
 
         /**
          * Combines carried baselines with a fresh sweep result.

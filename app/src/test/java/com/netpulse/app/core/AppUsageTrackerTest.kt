@@ -1,6 +1,7 @@
 package com.netpulse.app.core
 
 import com.google.common.truth.Truth.assertThat
+import com.netpulse.app.domain.model.UsageLogEntry
 import org.junit.Test
 
 class AppUsageTrackerTest {
@@ -87,4 +88,85 @@ class AppUsageTrackerTest {
         val merged = AppUsageTracker.mergedTotals(previous, fresh, carry = true)
         assertThat(merged).containsExactly("YouTube", 11_500L)
     }
+
+    @Test
+    fun seedTotals_sumsRowsPerPackage() {
+        val log = listOf(
+            row(dayStart + 60_000L, "YouTube", 1_000L),
+            row(dayStart + 120_000L, "YouTube", 2_500L),
+            row(dayStart + 60_000L, "Messages", 400L)
+        )
+
+        val seeded = AppUsageTracker.seedTotals(log, dayStart)
+
+        assertThat(seeded).containsExactly("YouTube", 3_500L, "Messages", 400L)
+    }
+
+    @Test
+    fun seedTotals_excludesRowsFromYesterday() {
+        val log = listOf(
+            row(dayStart - 60_000L, "YouTube", 9_000L),
+            row(dayStart + 60_000L, "YouTube", 1_000L)
+        )
+
+        val seeded = AppUsageTracker.seedTotals(log, dayStart)
+
+        assertThat(seeded).containsExactly("YouTube", 1_000L)
+    }
+
+    @Test
+    fun seedTotals_ignoresZeroByteRows() {
+        val log = listOf(
+            row(dayStart + 60_000L, "YouTube", 0L),
+            row(dayStart + 120_000L, "Messages", 700L)
+        )
+
+        val seeded = AppUsageTracker.seedTotals(log, dayStart)
+
+        assertThat(seeded).containsExactly("Messages", 700L)
+    }
+
+    @Test
+    fun seedTotals_emptyLogYieldsEmptyMap() {
+        assertThat(AppUsageTracker.seedTotals(emptyList(), dayStart)).isEmpty()
+    }
+
+    @Test
+    fun seededRows_survivesZeroByteSweepResult() {
+        val seeded = mapOf("YouTube" to 6_900_000L)
+        val measured = mapOf("YouTube" to 0L)
+
+        assertThat(AppUsageTracker.seededRows(seeded, measured))
+            .containsExactly("YouTube", 6_900_000L)
+    }
+
+    @Test
+    fun seededRows_droppedWhenSweepReportsPositiveTotal() {
+        val seeded = mapOf("YouTube" to 6_900_000L)
+        val measured = mapOf("YouTube" to 7_000_000L)
+
+        assertThat(AppUsageTracker.seededRows(seeded, measured)).isEmpty()
+    }
+
+    @Test
+    fun seededRows_survivesPackageMissingFromSweep() {
+        val seeded = mapOf("YouTube" to 6_900_000L, "Chrome" to 400L)
+
+        assertThat(AppUsageTracker.seededRows(seeded, emptyMap()))
+            .containsExactly("YouTube", 6_900_000L, "Chrome", 400L)
+    }
+
+    @Test
+    fun seededRows_ignoresZeroByteSeeds() {
+        val seeded = mapOf("YouTube" to 0L)
+
+        assertThat(AppUsageTracker.seededRows(seeded, emptyMap())).isEmpty()
+    }
+
+    private fun row(atMs: Long, pkg: String, bytes: Long) = UsageLogEntry(
+        minuteMs = atMs,
+        packageName = pkg,
+        label = pkg,
+        bytes = bytes
+    )
 }
