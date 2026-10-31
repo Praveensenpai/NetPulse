@@ -115,6 +115,14 @@ Kernel (/proc/net/dev) ──> TrafficDataSource ──> NetPulseService
   ```
 - **Consumers**: `NetPulseService`.
 
+### `com.netpulse.app.service.SpeedIconLabel` (Role: service, Lines: 62)
+- **Responsibility**: Pure label compaction for the status-bar glyph. Drops the decimal and rounds (`5.8M` -> `6M`), promotes three-digit values to the next unit (`988K` -> `1M`) instead of truncating, shows `0B` when idle and `<1K` when a non-zero value rounds to zero. Capped at 3 characters.
+- **Public Functions**:
+  ```kotlin
+  fun compact(value: String, unit: String): String
+  ```
+- **Consumers**: `SpeedIconGenerator`.
+
 ### `com.netpulse.app.service.SpeedNotificationManager` (Role: service, Lines: 75)
 - **Responsibility**: Configures silent NotificationChannel and builds persistent status bar notification.
 - **Public Functions**:
@@ -125,8 +133,8 @@ Kernel (/proc/net/dev) ──> TrafficDataSource ──> NetPulseService
   ```
 - **Consumers**: `NetPulseService`, `NetPulseApp`.
 
-### `com.netpulse.app.service.SpeedIconGenerator` (Role: service, Lines: 151)
-- **Responsibility**: Renders the status-bar speed glyph into a 96x96 bitmap. The number and a smaller unit are drawn as two runs at natural width (`UNIT_SCALE`), sharing one baseline; no `textScaleX` is used, because anisotropic squeezing while height stays fixed is what made the digits look stretched. Font size comes from measured digit ink via `getTextBounds("0000")`, not `fontMetrics` — the metrics box includes ascender/descender padding digits never occupy and left the number at half canvas height. If the pair still overflows `MAX_WIDTH` both runs shrink by the same factor, so proportions survive.
+### `com.netpulse.app.service.SpeedIconGenerator` (Role: service, Lines: 77)
+- **Responsibility**: Renders the status-bar speed glyph into a 96x96 bitmap. The platform scales a small icon by its width into a square slot, so the canvas is filled edge to edge and the font is fitted per label against both width and height. No `textScaleX` is ever applied: anisotropic squeezing is what made the digits look stretched; a wider label renders slightly smaller instead. Label text comes from `SpeedIconLabel`.
 - **Public Functions**:
   ```kotlin
   fun generateSpeedBitmap(speed: FormattedSpeed): Bitmap
@@ -168,6 +176,7 @@ Kernel (/proc/net/dev) ──> TrafficDataSource ──> NetPulseService
 ```
 
 ## 6. Recent Iteration Changes
+- **2026-11-01 (c)**: Glyph finalised. The two-run stacked design shipped in v1.4.5 measured 15x37 px on device, not the 39x28 px the notes claimed: stacking the unit under the number overflows the 26 px status-bar row, so the ink read as broken. Replaced with a single centred run sized per label against both canvas dimensions, so no `textScaleX` is ever applied and no label is distorted. Labels cap at three characters, the decimal is dropped (`5.8M` -> `5M`), and three-digit values promote to the next unit (`988K` -> `1M`) instead of truncating. Device measurements on `emulator-5554`: two-character `6M` ink 27 px tall vs clock 27 px; three-character case 28 px, both with natural glyph aspect. A 192x96 wide-canvas probe proved the platform scales small icons by width into a square slot, which is why the canvas must stay square and be filled edge to edge.
 - **2026-11-01 (b)**: Removed Live App Usage and Usage Log. They worked (seeded rows, byte-exact log) but a list of `0 B/s` rows reads as broken when the phone is idle, and the per-UID sweep needed ~50 s to cover every UID. Deleted `AppUsageTracker`, `AppUsageDataSource`, `AppUsageCard`, `UsageLogCard`, `AppUsage`, `UsageLogEntry`, both test files, the DataStore log/snapshot keys and codecs, `PACKAGE_USAGE_STATS`, and the `RequestUsageAccess` event. Restart-gap recovery and the midnight baseline went with them. Glyph rewritten at the same time: `SpeedIconGenerator` no longer applies `textScaleX`, which squashed digits horizontally while height stayed fixed — the stretch. It now draws the number and a smaller unit as two runs at natural width, sizing the font from measured digit ink (`getTextBounds`) rather than `fontMetrics`, whose ascender/descender padding had left the number at half the canvas height. Measured on `emulator-5554`: ink 39x28 px, matching the clock cap height; 17 unit tests green, lint 0 errors.
 - **2026-11-01**: Live App Usage card showed nothing for the first minute after a restart. Not a stuck sweep: `NetworkStatsManager` publishes per-UID buckets lazily, so the first polls return package keys with 0 bytes and the `total > 0` filter hides them, leaving "Waiting for the first sample…". Fix: `NetPulseService.startMonitoring()` seeds the tracker from today's persisted log before the poll loop; `AppUsageTracker` holds each seed for `SEED_CARRY_MS = 180_000` and drops it only when the sweep reports a **positive** total (a presence test would drop every seed on the first 0-byte sweep, which the first implementation did and the device caught). Extracted `seedTotals(log, dayStartMs)` and `seededRows(seeded, measured)` as pure companion functions so the rule is unit-testable. 10 unit tests green, lint 0 errors, device proof: 5 s after restart the card listed 8 rows at `0 B/s` matching the `12:00` log entries, where the previous build showed the waiting placeholder.
 - **2026-10-28 (k)**: `MIN_TEXT_SCALE_X` lowered 0.6 -> 0.5 to close the last of the glyph height gap. At 0.6 the font was still width-bound by the squeeze floor, capping ink at 24 px against a 28 px clock. At 0.5 the size term `byWidth / MIN_TEXT_SCALE_X` rises to ~94 units, so the worst case only needs the floor itself. Measured on `emulator-5554`, eight frames mid-transfer, same crop and 35% threshold: ink 38-39 x 28 px, constant height, level with the clock's 28 px cap height and double the original 14 px. The four-character `2.8M` was checked at 7x: decimal point survives as a distinct sliver, `2` counter and `M` apex stay open, no clipping. 0.5 is the floor; 0.37 (true height-bound) would crush the decimal.
