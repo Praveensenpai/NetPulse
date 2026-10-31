@@ -70,39 +70,6 @@ Kernel (/proc/net/dev) ──> TrafficDataSource ──> NetPulseService
   ```
 - **Consumers**: `NetPulseService`, `HomeViewModel`.
 
-### `com.netpulse.app.data.source.AppUsageDataSource` (Role: data, Lines: 360)
-- **Responsibility**: Per-app byte totals since local midnight via `NetworkStatsManager`. Walks every installed UID with `queryDetailsForUid` (a whole-day `queryDetails` is silently capped at 100 rows, and Samsung records streaming traffic in the FOREGROUND stats set that `querySummary` omits). Discovery is spread across polls in slices of `SWEEP_SLICE`; apps already reporting traffic are refreshed every poll so their totals stay live. Queries end at `now + BUCKET_PAD_MS`, not `now`: `NetworkStatsManager` returns a bucket only when it lies entirely inside `[start, end]`, so the open bucket containing the current moment is otherwise invisible (device-verified: `day..now` returned 0 rows, `day..now+2h` returned the live bucket). Buckets are filtered through `countsTowardDay(end, dayStart)`, so the pad cannot leak yesterday into today. That predicate keeps a bucket that straddles midnight whole, because `NetworkStats.Bucket` exposes whole-bucket totals only; the overcount is bounded by one bucketDuration and is covered by `AppUsageDataSourceTest`. When the service is already running near midnight (`withinBaselineWindow`), it snapshots each UID's cumulative total and reports `all - baseline` instead, which removes the straddle overcount exactly. The snapshotting visit itself reports 0 rather than the whole-bucket sum, so the figure grows from zero instead of jumping to an inflated value and collapsing on the next poll. If the service started later, it falls back to whole-bucket sums so earlier bytes are never subtracted away. `sinceBaseline(all, baseline)` returns null when netstats trims the history a baseline was taken against (or a reboot resets the counters); the UID is then re-baselined on the current cumulative total instead of being clamped to 0 B until the next midnight. The result map keeps every swept package, including 0 B ones, and `queryTodayTotals()` returns it unfiltered: callers must be able to tell a package that was swept and has 0 B from one that has not been swept yet. Dropping zeros made `pendingSweep` re-queue them forever, so `sweepComplete()` never returned true and v1.4.0's snapshot persistence stopped minutes after startup. `sweepComplete() = pendingSweep.isEmpty() && sweepTotals.isNotEmpty()`. The tracker filters zero-byte packages out of the UI rows. If the per-UID pass yields nothing, a chunked `queryDetails` fallback runs at most once per `FALLBACK_INTERVAL_MS`, subdividing any window that returns `ROW_CAP` rows so truncation cannot occur.
-- **Public Functions**:
-  ```kotlin
-  fun hasUsageAccess(): Boolean                 // AppOps GET_USAGE_STATS
-  fun queryTodayTotals(): Map<String, Long>     // packageName -> rx+tx bytes
-  fun labelFor(packageName: String): String
-  ```
-- **Consumers**: `AppUsageTracker`.
-
-### `com.netpulse.app.core.AppUsageTracker` (Role: core, Lines: 353)
-- **Responsibility**: Converts per-app totals into live rates and a bounded minute-resolution log. Deltas are clamped (NetworkStats jitters) and reported rates decay over `RATE_DECAY_MS` instead of dropping instantly. The live list is seeded from the persisted log on the first poll and holds each seed for `SEED_CARRY_MS` (180 s) until the sweep reports a positive total, so a restart does not show an empty card. `seedTotals` / `seededRows` are pure companion functions.
-- **Public Symbols**:
-  ```kotlin
-  val liveApps: StateFlow<List<AppUsage>>       // sorted by bytesPerSec
-  val log: StateFlow<List<UsageLogEntry>>       // MAX_LOG_ENTRIES = 300
-  fun hasUsageAccess(): Boolean
-  fun seedLog(entries: List<UsageLogEntry>)     // restore persisted log on start
-  fun seedTotals(log: List<UsageLogEntry>, dayStartMs: Long): Map<String, Long>
-  fun reset()
-  fun poll(): Boolean                            // true when the log grew
-  ```
-- **Consumers**: `NetPulseService` (poll loop), `HomeViewModel`.
-
-### `com.netpulse.app.ui.components.AppUsageCard / UsageLogCard` (Role: ui, Lines: 208)
-- **Responsibility**: Renders the live per-app ranking with proportional bars, the usage-access prompt, and the scrollable minute log.
-- **Public Functions**:
-  ```kotlin
-  fun AppUsageCard(apps: ImmutableList<AppUsage>, hasUsageAccess: Boolean, onRequestAccess: () -> Unit)
-  fun UsageLogCard(entries: ImmutableList<UsageLogEntry>)
-  ```
-- **Consumers**: `HomeScreen`.
-
 ### `com.netpulse.app.core.NetworkMonitor` (Role: core, Lines: 65)
 - **Responsibility**: Observes network transports (Wi-Fi, Mobile) via `ConnectivityManager.NetworkCallback`.
 - **Public Functions**:
@@ -159,7 +126,7 @@ Kernel (/proc/net/dev) ──> TrafficDataSource ──> NetPulseService
 - **Consumers**: `NetPulseService`, `NetPulseApp`.
 
 ### `com.netpulse.app.service.SpeedIconGenerator` (Role: service, Lines: 151)
-- **Responsibility**: Renders the status-bar speed glyph into a 96x96 bitmap. Font size is derived from canvas **height** (`MAX_HEIGHT`), and excess label width is absorbed per label via `Paint.textScaleX`, floored at `MIN_TEXT_SCALE_X`. Height is therefore constant across every reading.
+- **Responsibility**: Renders the status-bar speed glyph into a 96x96 bitmap. The number and a smaller unit are drawn as two runs at natural width (`UNIT_SCALE`), sharing one baseline; no `textScaleX` is used, because anisotropic squeezing while height stays fixed is what made the digits look stretched. Font size comes from measured digit ink via `getTextBounds("0000")`, not `fontMetrics` — the metrics box includes ascender/descender padding digits never occupy and left the number at half canvas height. If the pair still overflows `MAX_WIDTH` both runs shrink by the same factor, so proportions survive.
 - **Public Functions**:
   ```kotlin
   fun generateSpeedBitmap(speed: FormattedSpeed): Bitmap
@@ -201,6 +168,7 @@ Kernel (/proc/net/dev) ──> TrafficDataSource ──> NetPulseService
 ```
 
 ## 6. Recent Iteration Changes
+- **2026-11-01 (b)**: Removed Live App Usage and Usage Log. They worked (seeded rows, byte-exact log) but a list of `0 B/s` rows reads as broken when the phone is idle, and the per-UID sweep needed ~50 s to cover every UID. Deleted `AppUsageTracker`, `AppUsageDataSource`, `AppUsageCard`, `UsageLogCard`, `AppUsage`, `UsageLogEntry`, both test files, the DataStore log/snapshot keys and codecs, `PACKAGE_USAGE_STATS`, and the `RequestUsageAccess` event. Restart-gap recovery and the midnight baseline went with them. Glyph rewritten at the same time: `SpeedIconGenerator` no longer applies `textScaleX`, which squashed digits horizontally while height stayed fixed — the stretch. It now draws the number and a smaller unit as two runs at natural width, sizing the font from measured digit ink (`getTextBounds`) rather than `fontMetrics`, whose ascender/descender padding had left the number at half the canvas height. Measured on `emulator-5554`: ink 39x28 px, matching the clock cap height; 17 unit tests green, lint 0 errors.
 - **2026-11-01**: Live App Usage card showed nothing for the first minute after a restart. Not a stuck sweep: `NetworkStatsManager` publishes per-UID buckets lazily, so the first polls return package keys with 0 bytes and the `total > 0` filter hides them, leaving "Waiting for the first sample…". Fix: `NetPulseService.startMonitoring()` seeds the tracker from today's persisted log before the poll loop; `AppUsageTracker` holds each seed for `SEED_CARRY_MS = 180_000` and drops it only when the sweep reports a **positive** total (a presence test would drop every seed on the first 0-byte sweep, which the first implementation did and the device caught). Extracted `seedTotals(log, dayStartMs)` and `seededRows(seeded, measured)` as pure companion functions so the rule is unit-testable. 10 unit tests green, lint 0 errors, device proof: 5 s after restart the card listed 8 rows at `0 B/s` matching the `12:00` log entries, where the previous build showed the waiting placeholder.
 - **2026-10-28 (k)**: `MIN_TEXT_SCALE_X` lowered 0.6 -> 0.5 to close the last of the glyph height gap. At 0.6 the font was still width-bound by the squeeze floor, capping ink at 24 px against a 28 px clock. At 0.5 the size term `byWidth / MIN_TEXT_SCALE_X` rises to ~94 units, so the worst case only needs the floor itself. Measured on `emulator-5554`, eight frames mid-transfer, same crop and 35% threshold: ink 38-39 x 28 px, constant height, level with the clock's 28 px cap height and double the original 14 px. The four-character `2.8M` was checked at 7x: decimal point survives as a distinct sliver, `2` counter and `M` apex stay open, no clipping. 0.5 is the floor; 0.37 (true height-bound) would crush the decimal.
 - **2026-10-28 (j)**: Status-bar glyph was width-bound. `fixedTextSize` sized the font so the worst case `000B` fit `MAX_WIDTH`, which left the ink filling only ~27-41% of the 96 px canvas; the platform scales that padded square into the ~37 px slot, so the number rendered at half the clock's cap height. `fittedTextSize` now takes `min(byHeight, byWidth / MIN_TEXT_SCALE_X)`, sizing from `MAX_HEIGHT` first, and `horizontalScale` squeezes each label toward the 0.6 floor. Measured on `emulator-5554` at the same crop and 35% threshold: `0B` went 19x14 -> 32x24 px, `3.3M` renders 39x24 px, i.e. height is constant at 24 px across label lengths and now 86% of the clock's 28 px instead of 50%. Tests and lint green.

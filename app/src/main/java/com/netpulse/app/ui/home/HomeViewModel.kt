@@ -24,13 +24,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.collections.immutable.toImmutableList
 
 sealed interface HomeEvent {
     data class ToggleService(val enabled: Boolean) : HomeEvent
     data object RequestBatteryExemption : HomeEvent
     data object RequestNotificationPermission : HomeEvent
-    data object RequestUsageAccess : HomeEvent
 }
 
 class HomeViewModel(application: Application) : AndroidViewModel(application) {
@@ -39,7 +37,6 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     private val prefsRepo = app.preferencesRepository
     private val usageRepo = app.usageRepository
     private val networkMonitor = app.networkMonitor
-    private val appUsageTracker = app.appUsageTracker
 
     private val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
@@ -50,26 +47,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     init {
         observeData()
         observeSpeedTelemetry()
-        observeAppUsage()
         refreshPermissions()
-    }
-
-    private fun observeAppUsage() {
-        viewModelScope.launch {
-            combine(
-                appUsageTracker.liveApps,
-                appUsageTracker.log
-            ) { apps, log ->
-                Pair(apps, log)
-            }.collect { (apps, log) ->
-                _uiState.update { current ->
-                    current.copy(
-                        appUsage = apps.toImmutableList(),
-                        usageLog = log.toImmutableList()
-                    )
-                }
-            }
-        }
     }
 
     fun refreshPermissions() {
@@ -82,13 +60,11 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             NotificationManagerCompat.from(getApplication()).areNotificationsEnabled()
         }
         val isOptimized = !BatteryOptimizer.isIgnoringBatteryOptimizations(getApplication())
-        val usageAccess = appUsageTracker.hasUsageAccess()
 
         _uiState.update { current ->
             current.copy(
                 hasNotificationPermission = notifGranted,
-                isBatteryOptimized = isOptimized,
-                hasUsageAccess = usageAccess
+                isBatteryOptimized = isOptimized
             )
         }
     }
@@ -151,7 +127,6 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             HomeEvent.RequestBatteryExemption ->
                 BatteryOptimizer.requestIgnoreBatteryOptimizations(getApplication())
             HomeEvent.RequestNotificationPermission -> openNotificationSettings()
-            HomeEvent.RequestUsageAccess -> openUsageAccessSettings()
         }
     }
 
@@ -171,14 +146,6 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 e.printStackTrace()
             }
         }
-    }
-
-    private fun openUsageAccessSettings() {
-        val application = getApplication<Application>()
-        val intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        application.startActivity(intent)
     }
 
     private fun openNotificationSettings() {

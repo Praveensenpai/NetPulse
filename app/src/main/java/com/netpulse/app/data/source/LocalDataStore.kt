@@ -12,7 +12,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.netpulse.app.core.Constants
 import com.netpulse.app.domain.model.DailyUsage
 import com.netpulse.app.domain.model.MeterPreferences
-import com.netpulse.app.domain.model.UsageLogEntry
+
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -22,13 +22,6 @@ import java.util.Locale
 
 val Context.preferencesDataStore: DataStore<Preferences> by preferencesDataStore(name = Constants.PREFS_DATASTORE_NAME)
 val Context.usageDataStore: DataStore<Preferences> by preferencesDataStore(name = Constants.USAGE_DATASTORE_NAME)
-
-/** Point-in-time per-package totals persisted across service restarts. */
-data class AppUsageSnapshot(
-    val atMs: Long,
-    val usesBaseline: Boolean,
-    val totals: Map<String, Long>
-)
 
 class LocalDataStore(private val context: Context) {
 
@@ -42,8 +35,6 @@ class LocalDataStore(private val context: Context) {
         val START_ON_BOOT = booleanPreferencesKey("start_on_boot")
         val PAUSE_WHEN_SCREEN_OFF = booleanPreferencesKey("pause_when_screen_off")
         val OVERLAY_ALPHA = floatPreferencesKey("overlay_alpha")
-        val APP_USAGE_LOG = stringPreferencesKey("app_usage_log")
-        val APP_USAGE_SNAPSHOT = stringPreferencesKey("app_usage_snapshot")
     }
 
     val meterPreferencesFlow: Flow<MeterPreferences> = context.preferencesDataStore.data.map { prefs ->
@@ -116,88 +107,4 @@ class LocalDataStore(private val context: Context) {
         }
     }
 
-    fun observeAppUsageLog(): Flow<List<UsageLogEntry>> =
-        context.usageDataStore.data.map { prefs ->
-            decodeUsageLog(prefs[PrefKeys.APP_USAGE_LOG] ?: "")
-        }
-
-    suspend fun saveAppUsageLog(entries: List<UsageLogEntry>) {
-        val encoded = encodeUsageLog(entries)
-        context.usageDataStore.edit { prefs ->
-            prefs[PrefKeys.APP_USAGE_LOG] = encoded
-        }
-    }
-
-    /**
-     * Persists the log and the totals snapshot in a single DataStore edit.
-     *
-     * The two must land together: the snapshot is the baseline the next process
-     * subtracts from, so a snapshot older than the log would make the recovery
-     * delta include bytes already recorded in the log. One edit is atomic, so a
-     * crash either keeps both or neither.
-     */
-    suspend fun saveAppUsageState(entries: List<UsageLogEntry>, snapshot: AppUsageSnapshot) {
-        val encodedLog = encodeUsageLog(entries)
-        val encodedSnapshot = encodeSnapshot(snapshot)
-        context.usageDataStore.edit { prefs ->
-            prefs[PrefKeys.APP_USAGE_LOG] = encodedLog
-            prefs[PrefKeys.APP_USAGE_SNAPSHOT] = encodedSnapshot
-        }
-    }
-
-    /** Totals seen by a previous process, plus the mode that produced them. */
-    suspend fun saveAppUsageSnapshot(snapshot: AppUsageSnapshot) {
-        context.usageDataStore.edit { prefs ->
-            prefs[PrefKeys.APP_USAGE_SNAPSHOT] = encodeSnapshot(snapshot)
-        }
-    }
-
-    private fun encodeSnapshot(snapshot: AppUsageSnapshot): String = buildString {
-        append(snapshot.atMs).append('|').append(if (snapshot.usesBaseline) 1 else 0)
-        for ((pkg, bytes) in snapshot.totals) append('\n').append(pkg).append('|').append(bytes)
-    }
-
-    suspend fun loadAppUsageSnapshot(): AppUsageSnapshot? {
-        val raw = context.usageDataStore.data.map { it[PrefKeys.APP_USAGE_SNAPSHOT] ?: "" }.first()
-        if (raw.isEmpty()) return null
-        val lines = raw.lineSequence().toList()
-        val header = lines.firstOrNull()?.split('|') ?: return null
-        if (header.size != 2) return null
-        val atMs = header[0].toLongOrNull() ?: return null
-        val usesBaseline = header[1] == "1"
-        val totals = HashMap<String, Long>()
-        for (line in lines.drop(1)) {
-            val sep = line.lastIndexOf('|')
-            if (sep <= 0) continue
-            val bytes = line.substring(sep + 1).toLongOrNull() ?: continue
-            totals[line.substring(0, sep)] = bytes
-        }
-        return AppUsageSnapshot(atMs, usesBaseline, totals)
-    }
-
-    private fun encodeUsageLog(entries: List<UsageLogEntry>): String =
-        entries.joinToString(separator = "\n") { entry ->
-            listOf(
-                entry.minuteMs,
-                entry.packageName,
-                entry.label.replace('|', ' '),
-                entry.bytes
-            ).joinToString(separator = "|")
-        }
-
-    private fun decodeUsageLog(raw: String): List<UsageLogEntry> {
-        if (raw.isEmpty()) return emptyList()
-        return raw.lineSequence().mapNotNull { line ->
-            val parts = line.split('|')
-            if (parts.size != 4) return@mapNotNull null
-            val minuteMs = parts[0].toLongOrNull() ?: return@mapNotNull null
-            val bytes = parts[3].toLongOrNull() ?: return@mapNotNull null
-            UsageLogEntry(
-                minuteMs = minuteMs,
-                packageName = parts[1],
-                label = parts[2],
-                bytes = bytes
-            )
-        }.toList()
-    }
 }
