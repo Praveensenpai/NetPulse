@@ -25,6 +25,9 @@ val Context.usageDataStore: DataStore<Preferences> by preferencesDataStore(name 
 
 class LocalDataStore(private val context: Context) {
 
+    /** Day key whose retention sweep already ran, so the sweep runs once per day. */
+    private var lastPrunedDayKey: String? = null
+
     private object PrefKeys {
         val SERVICE_ENABLED = booleanPreferencesKey("service_enabled")
         val SHOW_NOTIFICATION = booleanPreferencesKey("show_notification")
@@ -108,6 +111,29 @@ class LocalDataStore(private val context: Context) {
             prefs[mobileKey] = curMobile + mobileDelta
             prefs[wifiKey] = curWifi + wifiDelta
         }
+        pruneOldUsage(dateKey)
+    }
+
+    /**
+     * Drops usage buckets older than [DayKeys.RETENTION_DAYS].
+     *
+     * A pair of keys is written per day and nothing reads a past day, so
+     * without this the preferences file grows forever. That file is rewritten
+     * in full on every [addUsage], which runs on the 1 Hz service loop, so the
+     * cost of dead days is paid continuously rather than once.
+     *
+     * Runs at most once per day: the retention window only changes at
+     * midnight, so re-scanning on every tick would be pure overhead.
+     */
+    private suspend fun pruneOldUsage(todayKey: String) {
+        if (lastPrunedDayKey == todayKey) return
+        context.usageDataStore.edit { prefs ->
+            val stale = DayKeys.keysToPrune(prefs.asMap().keys.map { it.name }, todayKey)
+            // Usage values are always Long, so removing through the same key
+            // factory keeps this type-safe without casting Preferences.Key<*>.
+            stale.forEach { prefs.remove(longPreferencesKey(it)) }
+        }
+        lastPrunedDayKey = todayKey
     }
 
     suspend fun resetUsage(dateKey: String = getTodayKey()) {

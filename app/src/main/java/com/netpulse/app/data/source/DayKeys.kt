@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flow
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
@@ -19,6 +20,19 @@ import java.time.format.DateTimeFormatter
 internal object DayKeys {
 
     private val FORMATTER: DateTimeFormatter = DateTimeFormatter.ISO_LOCAL_DATE
+
+    /**
+     * How many day buckets to keep, counting today.
+     *
+     * Nothing reads a past day: the usage cards and the per-app ledger were
+     * removed, and every consumer only ever asks for today. Yesterday is kept
+     * anyway because it is nearly free and covers a rollover that straddles a
+     * restart; everything older is garbage that DataStore would otherwise
+     * rewrite on every tick forever.
+     */
+    const val RETENTION_DAYS = 2
+
+    private val USAGE_KEY = Regex("""^usage_(\d{4}-\d{2}-\d{2})_(?:mobile|wifi)$""")
 
     /**
      * How long the ticker sleeps before re-reading the clock.
@@ -61,6 +75,36 @@ internal object DayKeys {
             delay(recheckMs)
         }
     }.distinctUntilChanged()
+
+    /**
+     * Usage keys that fall outside the [retentionDays] window ending at
+     * [todayKey].
+     *
+     * Keys that are not usage keys, or whose date cannot be parsed, are never
+     * returned: pruning must not be able to delete a preference it does not
+     * understand. A key dated in the future (the clock was moved backwards) is
+     * also kept, since discarding it would destroy data on a transient skew.
+     */
+    fun keysToPrune(
+        keys: Collection<String>,
+        todayKey: String,
+        retentionDays: Int = RETENTION_DAYS
+    ): Set<String> {
+        if (retentionDays < 1) return emptySet()
+        val today = parseKeyDate(todayKey) ?: return emptySet()
+        val oldestKept = today.minusDays(retentionDays.toLong() - 1)
+
+        return keys.filter { key ->
+            val day = usageKeyDate(key) ?: return@filter false
+            day.isBefore(oldestKept)
+        }.toSet()
+    }
+
+    private fun usageKeyDate(key: String): LocalDate? =
+        USAGE_KEY.find(key)?.groupValues?.get(1)?.let(::parseKeyDate)
+
+    private fun parseKeyDate(key: String): LocalDate? =
+        runCatching { LocalDate.parse(key, FORMATTER) }.getOrNull()
 
     /**
      * Local date for an epoch instant.

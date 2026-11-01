@@ -90,8 +90,8 @@ Kernel (/proc/net/dev) ──> TrafficDataSource ──> NetPulseService
   ```
 - **Consumers**: `NetPulseService`, `HomeViewModel`.
 
-### `com.netpulse.app.data.source.LocalDataStore` (Role: data, Lines: 122)
-- **Responsibility**: DataStore Preferences manager for application settings and daily usage history. The usage read path follows the calendar: `observeDailyUsage()` re-derives the day key on a ticker instead of resolving it once, so the total rolls over at local midnight without a restart.
+### `com.netpulse.app.data.source.LocalDataStore` (Role: data, Lines: 148)
+- **Responsibility**: DataStore Preferences manager for application settings and daily usage history. The usage read path follows the calendar: `observeDailyUsage()` re-derives the day key on a ticker instead of resolving it once, so the total rolls over at local midnight without a restart. The write path prunes usage buckets older than `DayKeys.RETENTION_DAYS` once per day, so the preferences file does not grow without bound under the 1 Hz write loop.
 - **Public Functions**:
   ```kotlin
   val meterPreferencesFlow: Flow<MeterPreferences>
@@ -102,16 +102,17 @@ Kernel (/proc/net/dev) ──> TrafficDataSource ──> NetPulseService
   ```
 - **Consumers**: `PreferencesRepositoryImpl`, `UsageRepositoryImpl`.
 
-### `com.netpulse.app.data.source.DayKeys` (Role: data, Lines: 73)
-- **Responsibility**: Pure `java.time` day-bucket arithmetic with no Android types, so it is unit-testable. Owns the `yyyy-MM-dd` key format, next-midnight calculation, and the day-key ticker that drives the usage rollover.
+### `com.netpulse.app.data.source.DayKeys` (Role: data, Lines: 117)
+- **Responsibility**: Pure `java.time` day-bucket arithmetic with no Android types, so it is unit-testable. Owns the `yyyy-MM-dd` key format, next-midnight calculation, the day-key ticker that drives the usage rollover, and the retention rule that decides which usage buckets are stale.
 - **Public Functions**:
   ```kotlin
   fun keyFor(nowMs: Long, zone: ZoneId): String
   fun nextMidnightMs(nowMs: Long, zone: ZoneId): Long
   fun dayKeyTicker(clock: () -> Long, zone: ZoneId, recheckMs: Long = RECHECK_MS): Flow<String>
+  fun keysToPrune(keys: Collection<String>, todayKey: String, retentionDays: Int = RETENTION_DAYS): Set<String>
   ```
 - **Consumers**: `LocalDataStore`.
-- **Note**: Uses `Instant.atZone(...).toLocalDate()` rather than `LocalDate.ofInstant`, which is API 34 and would break the API 33 floor.
+- **Note**: Uses `Instant.atZone(...).toLocalDate()` rather than `LocalDate.ofInstant`, which is API 34 and would break the API 33 floor. `keysToPrune` never returns a key it cannot parse as a usage bucket, and keeps future-dated keys so a backwards clock skew cannot delete data.
 
 ### `com.netpulse.app.service.NetPulseService` (Role: service, Lines: 246)
 - **Responsibility**: Foreground service managing low-overhead 1Hz polling loop with screen-off pause.
@@ -188,6 +189,7 @@ Kernel (/proc/net/dev) ──> TrafficDataSource ──> NetPulseService
 ```
 
 ## 6. Recent Iteration Changes
+- **2026-11-01 (e)**: Usage ledger grew without bound. A pair of DataStore keys (`usage_YYYY-MM-DD_mobile` / `_wifi`) was written per day and nothing ever removed them: `resetUsage()` only zeroed today's pair, and after the per-app usage screens were deleted in `2026-11-01 (b)` no code path read a past day at all. DataStore rewrites and fsyncs the entire preferences protobuf on every `edit`, and `addUsage()` runs on the 1 Hz service loop, so every dead day was paid for continuously rather than once. Fix: `DayKeys.keysToPrune(keys, todayKey, retentionDays)` is a pure function returning stale usage keys, deliberately conservative - it ignores names it cannot parse and keeps future-dated keys so a backwards clock skew cannot delete data. `LocalDataStore.pruneOldUsage()` applies it after the write, at most once per day (guarded by `lastPrunedDayKey`). `RETENTION_DAYS = 2` keeps today and yesterday, the latter purely to cover a rollover straddling a restart. 6 new tests (40 total, 14 in `DayKeysTest`), lint 0 errors. Device proof on `emulator-5554`: seeded `usage_2026-10-25_*`, `2026-10-20_*`, `2026-10-18_*` by back-dating the clock and generating traffic, then jumped to 2026-11-01 and wrote bytes. All three stale pairs were swept; the file went to 63 bytes holding only `usage_2026-11-01_wifi = 21,907,483 B`, matching the 20.9 MB on screen byte for byte.
 - **2026-11-01 (d)**: Daily usage counter froze at midnight until an app restart. `observeDailyUsage(dateKey: String = getTodayKey())` evaluated its default argument once, when the Flow was subscribed, so the key was baked into the `map` closure forever; `addUsage()` called `getTodayKey()` fresh on every write. Post-midnight writes therefore landed on `usage_2026-11-02_*` while the UI, notification, and overlay stayed subscribed to `usage_2026-11-01_*`. Proof from the stored protobuf after crossing midnight with the process alive: `11-01_wifi = 168,826,534 B` (160.9 MB, on screen) alongside `11-02_wifi = 21,835,663 B` (20.8 MB, invisible). Fix: extracted `DayKeys` (pure `java.time`, 73 lines) providing `keyFor`, `nextMidnightMs`, and a `dayKeyTicker` that re-reads the clock every `RECHECK_MS = 30_000` and `distinctUntilChanged()`; `observeDailyUsage()` now `flatMapLatest`s over that ticker. `LocalDataStore` shrank 203 -> 122 lines. 8 new tests (42 total). Device proof on `emulator-5554` after the fix, no restart: card moved 160.9 MB -> 63.3 MB, matching stored `11-02_wifi = 66,333,995 B` byte for byte. Lint initially failed with `NewApi` on `LocalDate.ofInstant` (API 34); switched to `Instant.atZone(...).toLocalDate()` and lint returned to 0 errors.
 - **2026-11-01 (c)**: Glyph finalised. The two-run stacked design shipped in v1.4.5 measured 15x37 px on device, not the 39x28 px the notes claimed: stacking the unit under the number overflows the 26 px status-bar row, so the ink read as broken. Replaced with a single centred run sized per label against both canvas dimensions, so no `textScaleX` is ever applied and no label is distorted. Labels cap at three characters, the decimal is dropped (`5.8M` -> `5M`), and three-digit values promote to the next unit (`988K` -> `1M`) instead of truncating. Device measurements on `emulator-5554`: glyph ink 24-28 px tall vs a 27 px clock across captures (24 px for the two-character release-build frame, 27-28 px in debug builds), with natural glyph aspect at every length. A 192x96 wide-canvas probe proved the platform scales small icons by width into a square slot, which is why the canvas must stay square and be filled edge to edge.
 - **2026-11-01 (b)**: Removed Live App Usage and Usage Log. They worked (seeded rows, byte-exact log) but a list of `0 B/s` rows reads as broken when the phone is idle, and the per-UID sweep needed ~50 s to cover every UID. Deleted `AppUsageTracker`, `AppUsageDataSource`, `AppUsageCard`, `UsageLogCard`, `AppUsage`, `UsageLogEntry`, both test files, the DataStore log/snapshot keys and codecs, `PACKAGE_USAGE_STATS`, and the `RequestUsageAccess` event. Restart-gap recovery and the midnight baseline went with them. Glyph rewritten at the same time: `SpeedIconGenerator` no longer applies `textScaleX`, which squashed digits horizontally while height stayed fixed — the stretch. It now draws the number and a smaller unit as two runs at natural width, sizing the font from measured digit ink (`getTextBounds`) rather than `fontMetrics`, whose ascender/descender padding had left the number at half the canvas height. Measured on `emulator-5554`: ink 39x28 px, matching the clock cap height; 17 unit tests green, lint 0 errors.
