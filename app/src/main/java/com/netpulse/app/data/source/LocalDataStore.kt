@@ -12,6 +12,8 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.netpulse.app.core.Constants
 import com.netpulse.app.domain.model.DailyUsage
 import com.netpulse.app.domain.model.MeterPreferences
+import com.netpulse.app.domain.model.UsageHistory
+import com.netpulse.app.domain.model.UsageRange
 
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -19,6 +21,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 val Context.preferencesDataStore: DataStore<Preferences> by preferencesDataStore(name = Constants.PREFS_DATASTORE_NAME)
 val Context.usageDataStore: DataStore<Preferences> by preferencesDataStore(name = Constants.USAGE_DATASTORE_NAME)
@@ -38,6 +41,10 @@ class LocalDataStore(private val context: Context) {
         val START_ON_BOOT = booleanPreferencesKey("start_on_boot")
         val PAUSE_WHEN_SCREEN_OFF = booleanPreferencesKey("pause_when_screen_off")
         val OVERLAY_ALPHA = floatPreferencesKey("overlay_alpha")
+
+        /** Monotonic all-time totals; pruning never removes these. */
+        val LIFETIME_MOBILE = longPreferencesKey("lifetime_mobile")
+        val LIFETIME_WIFI = longPreferencesKey("lifetime_wifi")
     }
 
     val meterPreferencesFlow: Flow<MeterPreferences> = context.preferencesDataStore.data.map { prefs ->
@@ -101,6 +108,47 @@ class LocalDataStore(private val context: Context) {
         }
     }
 
+    /**
+     * Usage over today, the trailing week, the trailing month, and all time.
+     *
+     * Re-emits whenever any retained bucket or lifetime counter changes, and
+     * re-keys itself when the calendar rolls over so "today" cannot go stale.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun observeUsageHistory(): Flow<UsageHistory> =
+        DayKeys.dayKeyTicker(
+            clock = System::currentTimeMillis,
+            zone = ZoneId.systemDefault()
+        ).flatMapLatest { dateKey ->
+            context.usageDataStore.data.map { prefs ->
+                UsageAggregator.aggregate(
+                    days = readDays(prefs),
+                    todayKey = dateKey,
+                    lifetime = lifetimeOf(prefs)
+                )
+            }
+        }
+
+    private fun readDays(prefs: Preferences): List<DailyUsage> =
+        prefs.asMap().keys
+            .mapNotNull { key ->
+                val date = DayKeys.dateOfUsageKey(key.name) ?: return@mapNotNull null
+                date.format(DateTimeFormatter.ISO_LOCAL_DATE)
+            }
+            .distinct()
+            .map { dateKey ->
+                DailyUsage(
+                    dateKey = dateKey,
+                    mobileBytes = prefs[longPreferencesKey("usage_${dateKey}_mobile")] ?: 0L,
+                    wifiBytes = prefs[longPreferencesKey("usage_${dateKey}_wifi")] ?: 0L
+                )
+            }
+
+    private fun lifetimeOf(prefs: Preferences): UsageRange = UsageRange(
+        mobileBytes = prefs[PrefKeys.LIFETIME_MOBILE] ?: 0L,
+        wifiBytes = prefs[PrefKeys.LIFETIME_WIFI] ?: 0L
+    )
+
     suspend fun addUsage(dateKey: String = getTodayKey(), mobileDelta: Long, wifiDelta: Long) {
         if (mobileDelta <= 0L && wifiDelta <= 0L) return
         val mobileKey = longPreferencesKey("usage_${dateKey}_mobile")
@@ -110,6 +158,10 @@ class LocalDataStore(private val context: Context) {
             val curWifi = prefs[wifiKey] ?: 0L
             prefs[mobileKey] = curMobile + mobileDelta
             prefs[wifiKey] = curWifi + wifiDelta
+            // Lifetime counters are separate from the day buckets because
+            // pruning deletes old days; all-time has to survive that.
+            prefs[PrefKeys.LIFETIME_MOBILE] = (prefs[PrefKeys.LIFETIME_MOBILE] ?: 0L) + mobileDelta
+            prefs[PrefKeys.LIFETIME_WIFI] = (prefs[PrefKeys.LIFETIME_WIFI] ?: 0L) + wifiDelta
         }
         pruneOldUsage(dateKey)
     }

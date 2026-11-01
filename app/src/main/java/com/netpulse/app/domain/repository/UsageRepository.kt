@@ -1,6 +1,7 @@
 package com.netpulse.app.domain.repository
 
 import com.netpulse.app.domain.model.DailyUsage
+import com.netpulse.app.domain.model.UsageHistory
 import kotlinx.coroutines.flow.Flow
 
 interface UsageRepository {
@@ -8,4 +9,5 @@ interface UsageRepository {
     suspend fun getTodayUsage(): DailyUsage
     suspend fun recordUsage(mobileDelta: Long, wifiDelta: Long)
     suspend fun resetTodayUsage()
+    fun observeUsageHistory(): Flow<UsageHistory>
 }

@@ -16,6 +16,7 @@ import androidx.compose.material.icons.rounded.SignalCellularAlt
 import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -24,12 +25,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.netpulse.app.core.SpeedFormatter
-import com.netpulse.app.domain.model.DailyUsage
+import com.netpulse.app.domain.model.UsageHistory
+import com.netpulse.app.domain.model.UsageRange
+import com.netpulse.app.ui.home.UsageWindow
 import com.netpulse.app.ui.theme.Dimens
 
 @Composable
 fun UsageSummaryCard(
-    dailyUsage: DailyUsage,
+    history: UsageHistory,
+    selectedWindow: UsageWindow,
+    onSelectWindow: (UsageWindow) -> Unit,
     modifier: Modifier = Modifier
 ) {
     Card(
@@ -47,29 +52,74 @@ fun UsageSummaryCard(
                 )
                 Spacer(modifier = Modifier.width(Dimens.sm))
                 Text(
-                    text = "Today's Consumption",
+                    text = "Data Consumption",
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurface
                 )
             }
+            Spacer(modifier = Modifier.height(Dimens.sm))
+            UsageWindowChips(
+                selected = selectedWindow,
+                onSelect = onSelectWindow
+            )
             Spacer(modifier = Modifier.height(Dimens.md))
+            val range = history.rangeFor(selectedWindow)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(Dimens.md)
             ) {
                 UsageItem(
                     label = "Mobile Data",
-                    usage = SpeedFormatter.formatDataUsage(dailyUsage.mobileBytes),
+                    usage = SpeedFormatter.formatDataUsage(range.mobileBytes),
                     icon = Icons.Rounded.SignalCellularAlt,
                     modifier = Modifier.weight(1f)
                 )
                 UsageItem(
                     label = "Wi-Fi",
-                    usage = SpeedFormatter.formatDataUsage(dailyUsage.wifiBytes),
+                    usage = SpeedFormatter.formatDataUsage(range.wifiBytes),
                     icon = Icons.Rounded.Wifi,
                     modifier = Modifier.weight(1f)
                 )
             }
+            Spacer(modifier = Modifier.height(Dimens.sm))
+            Text(
+                text = "Total ${SpeedFormatter.formatDataUsage(range.totalBytes)}",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+/** Total for the selected window. */
+private fun UsageHistory.rangeFor(window: UsageWindow): UsageRange = when (window) {
+    UsageWindow.TODAY -> today
+    UsageWindow.WEEK -> last7Days
+    UsageWindow.MONTH -> last30Days
+    UsageWindow.ALL_TIME -> allTime
+}
+
+@Composable
+private fun UsageWindowChips(
+    selected: UsageWindow,
+    onSelect: (UsageWindow) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(Dimens.xs)
+    ) {
+        UsageWindow.entries.forEach { window ->
+            FilterChip(
+                selected = window == selected,
+                onClick = { onSelect(window) },
+                label = {
+                    Text(
+                        text = window.label,
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
+            )
         }
     }
 }

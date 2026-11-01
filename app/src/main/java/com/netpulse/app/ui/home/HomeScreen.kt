@@ -61,7 +61,11 @@ fun HomeScreen(
         }
 
         item(key = "usage_summary") {
-            UsageSummaryCard(dailyUsage = state.dailyUsage)
+            UsageSummaryCard(
+                history = state.usageHistory,
+                selectedWindow = state.selectedWindow,
+                onSelectWindow = { onEvent(HomeEvent.SelectUsageWindow(it)) }
+            )
         }
 
         if (!state.hasNotificationPermission) {

@@ -94,19 +94,23 @@ Kernel (/proc/net/dev) ──> TrafficDataSource ──> NetPulseService
   ```
 - **Consumers**: `NetPulseService`, `HomeViewModel`.
 
-### `com.netpulse.app.data.source.LocalDataStore` (Role: data, Lines: 148)
-- **Responsibility**: DataStore Preferences manager for application settings and daily usage history. The usage read path follows the calendar: `observeDailyUsage()` re-derives the day key on a ticker instead of resolving it once, so the total rolls over at local midnight without a restart. The write path prunes usage buckets older than `DayKeys.RETENTION_DAYS` once per day, so the preferences file does not grow without bound under the 1 Hz write loop.
+### `com.netpulse.app.data.source.LocalDataStore` (Role: data, Lines: 200)
+- **Responsibility**: DataStore Preferences manager for application settings and usage history. The usage read path follows the calendar: `observeUsageHistory()` re-derives the day key on a ticker instead of resolving it once, so the windows roll over at local midnight without a restart. Writes maintain two separate records: bounded per-day buckets and monotonic `lifetime_mobile` / `lifetime_wifi` counters that pruning never touches, so all-time totals stay exact after old days are swept.
 - **Public Functions**:
   ```kotlin
   val meterPreferencesFlow: Flow<MeterPreferences>
+  suspend fun getMeterPreferences(): MeterPreferences
+  suspend fun updateMeterPreferences(transform: (MeterPreferences) -> MeterPreferences)
   fun getTodayKey(): String
   fun observeDailyUsage(): Flow<DailyUsage>
+  fun observeUsageHistory(): Flow<UsageHistory>
   suspend fun addUsage(dateKey: String = getTodayKey(), mobileDelta: Long, wifiDelta: Long)
   suspend fun resetUsage(dateKey: String = getTodayKey())
   ```
 - **Consumers**: `PreferencesRepositoryImpl`, `UsageRepositoryImpl`.
+- **Note**: `addUsage` increments the day bucket and both lifetime counters in one `edit`. `resetUsage` zeroes a day bucket but deliberately leaves the lifetime counters alone, since all-time is not a per-day figure.
 
-### `com.netpulse.app.data.source.DayKeys` (Role: data, Lines: 117)
+### `com.netpulse.app.data.source.DayKeys` (Role: data, Lines: 127)
 - **Responsibility**: Pure `java.time` day-bucket arithmetic with no Android types, so it is unit-testable. Owns the `yyyy-MM-dd` key format, next-midnight calculation, the day-key ticker that drives the usage rollover, and the retention rule that decides which usage buckets are stale.
 - **Public Functions**:
   ```kotlin
@@ -114,9 +118,32 @@ Kernel (/proc/net/dev) ──> TrafficDataSource ──> NetPulseService
   fun nextMidnightMs(nowMs: Long, zone: ZoneId): Long
   fun dayKeyTicker(clock: () -> Long, zone: ZoneId, recheckMs: Long = RECHECK_MS): Flow<String>
   fun keysToPrune(keys: Collection<String>, todayKey: String, retentionDays: Int = RETENTION_DAYS): Set<String>
+  fun parseKey(key: String): LocalDate?
+  fun dateOfUsageKey(key: String): LocalDate?
   ```
-- **Consumers**: `LocalDataStore`.
-- **Note**: Uses `Instant.atZone(...).toLocalDate()` rather than `LocalDate.ofInstant`, which is API 34 and would break the API 33 floor. `keysToPrune` never returns a key it cannot parse as a usage bucket, and keeps future-dated keys so a backwards clock skew cannot delete data.
+- **Consumers**: `LocalDataStore`, `UsageAggregator`.
+- **Note**: Uses `Instant.atZone(...).toLocalDate()` rather than `LocalDate.ofInstant`, which is API 34 and would break the API 33 floor. `keysToPrune` never returns a key it cannot parse as a usage bucket, and keeps future-dated keys so a backwards clock skew cannot delete data. `RETENTION_DAYS = 35` keeps a full trailing month plus slack; the lifetime counters are what make all-time independent of this window.
+
+### `com.netpulse.app.data.source.UsageAggregator` (Role: data, Lines: 71)
+- **Responsibility**: Pure roll-up of the retained per-day ledger into the Today / trailing-7-day / trailing-30-day / all-time windows, with no Android types so the boundary arithmetic is unit-testable.
+- **Public Functions**:
+  ```kotlin
+  const val WEEK_DAYS = 7
+  const val MONTH_DAYS = 30
+  fun aggregate(days: Collection<DailyUsage>, todayKey: String, lifetime: UsageRange): UsageHistory
+  fun seedLifetime(days: Collection<DailyUsage>): UsageRange
+  ```
+- **Consumers**: `LocalDataStore.observeUsageHistory`.
+- **Note**: "This week" is the trailing seven calendar days including today, not the ISO week, which would drop days the user still considers current. Future-dated buckets are ignored so a backwards clock skew cannot inflate every window. `allTime = lifetime.atLeast(seedLifetime(days))` keeps all-time monotonic on upgrades from builds that had no lifetime counters, without writing a migration row.
+
+### `com.netpulse.app.domain.model.UsageHistory` (Role: domain, Lines: 49)
+- **Responsibility**: `UsageRange` (mobile + wifi byte pair, with `plus` and a per-transport `atLeast`) and `UsageHistory` (the four windows plus the retained per-day ledger for a sparkline).
+- **Public Symbols**:
+  ```kotlin
+  data class UsageRange(val mobileBytes: Long = 0L, val wifiBytes: Long = 0L)
+  data class UsageHistory(today, last7Days, last30Days, allTime, days: List<DailyUsage>)
+  ```
+- **Consumers**: `UsageAggregator`, `LocalDataStore`, `UsageSummaryCard`, `HomeUiState`.
 
 ### `com.netpulse.app.service.NetPulseService` (Role: service, Lines: 217)
 - **Responsibility**: Foreground service managing low-overhead 1Hz polling loop with screen-off pause. Display state is read from `PowerManager.isInteractive` on every decision, never cached.
@@ -193,23 +220,52 @@ Kernel (/proc/net/dev) ──> TrafficDataSource ──> NetPulseService
 - **Responsibility**: Samsung Quick Settings panel tile toggle.
 - **Public Lifecycle**: `onStartListening()`, `onClick()`.
 
-### `com.netpulse.app.ui.home.HomeRoute / HomeScreen` (Role: ui, Lines: 120)
-- **Responsibility**: Two-layer presentation displaying speed gauge, daily usage, and service controls.
-- **State Contract**: `HomeUiState` (immutable, includes `showUploadSpeed`), `HomeEvent` (sealed interface).
+### `com.netpulse.app.ui.home.HomeRoute / HomeScreen` (Role: ui, Lines: 220)
+- **Responsibility**: Two-layer presentation displaying speed gauge, usage history, and service controls. `HomeRoute` wires the view model, re-reads permissions in `LifecycleResumeEffect`, and collects with `collectAsStateWithLifecycle()`.
+- **State Contract**: `HomeUiState` (immutable, includes `usageHistory`, `selectedWindow`, `showUploadSpeed`), `HomeEvent` (sealed interface, includes `SelectUsageWindow`).
+
+### `com.netpulse.app.ui.home.HomeUiState` (Role: ui, Lines: 26)
+- **Responsibility**: Immutable home-screen state plus the `UsageWindow` enum (`TODAY`, `WEEK`, `MONTH`, `ALL_TIME`) that labels the usage selector.
+- **Public Symbols**:
+  ```kotlin
+  enum class UsageWindow(val label: String)
+  data class HomeUiState(..., val usageHistory: UsageHistory, val selectedWindow: UsageWindow)
+  ```
+
+### `com.netpulse.app.ui.components.UsageSummaryCard` (Role: ui, Lines: 156)
+- **Responsibility**: Consumption card with a `FilterChip` row selecting the window and Mobile / Wi-Fi / total figures for the selected range. Window selection lives in the view model, so the card stays stateless.
+- **Public Functions**:
+  ```kotlin
+  fun UsageSummaryCard(history: UsageHistory, selectedWindow: UsageWindow, onSelectWindow: (UsageWindow) -> Unit, modifier: Modifier)
+  ```
+- **Consumers**: `HomeScreen`.
+- **Note**: `FilterChip` exposes selection as `checked`, not `selected` — verification that a tap landed has to read `checked="true"` from the semantics node, not the text node.
 
 ### `com.netpulse.app.ui.settings.SettingsRoute / SettingsScreen` (Role: ui, Lines: 90)
 - **Responsibility**: Two-layer presentation for notification, overlay, units, and battery behavior toggles.
 - **State Contract**: `SettingsUiState` (immutable), `SettingsEvent` (sealed interface).
 
-### `com.netpulse.app.ui.guide.BatteryGuideRoute / BatteryGuideScreen` (Role: ui, Lines: 110)
-- **Responsibility**: Samsung One UI battery exemption instructions and intent triggers.
+### `com.netpulse.app.ui.guide.BatteryGuideRoute / BatteryGuideScreen` (Role: ui, Lines: 214)
+- **Responsibility**: Device-appropriate battery optimisation instructions and intent triggers. `BatteryGuideRoute` holds the exemption state, re-reads it on `ON_RESUME` via `LifecycleEventObserver`, and resolves the Samsung flag once.
+- **State Contract**: `isBatteryExempt` (drives the disabled/granted button), `isSamsungDevice` (selects the guide copy and the second button).
+
+### `com.netpulse.app.ui.guide.BatteryGuideTexts` (Role: ui, Lines: 75)
+- **Responsibility**: Pure, Compose-free copy selection so the wording is unit-testable. Returns the Samsung One UI guide or a generic Android guide depending on the manufacturer.
+- **Public Symbols**:
+  ```kotlin
+  data class BatteryGuideStep(val title: String, val description: String)
+  data class BatteryGuide)
+  fun forDevice(isSamsungDevice: Boolean): BatteryGuideContent
+  ```
+- **Consumers**: `BatteryGuideScreen`.
+- **Note**: A test (`BatteryGuideTextsTest`) fails the build if "Samsung", "One UI", "Device Care", or "Deep Sleeping" appears in the generic copy. The generic guide previously did not exist: every device was told to configure Device Care, which most do not have.
 
 ## 4. Execution Lifecycle Trace
 1. **Startup**: `NetPulseApp` initializes singletons, ensures notification channel, and starts `NetPulseService` if enabled.
 2. **Foreground Telemetry**: `NetPulseService` runs 1s polling interval on `Dispatchers.Default` reading `TrafficDataSource`.
 3. **Screen-Off Suspension**: `ScreenStateReceiver` catches `ACTION_SCREEN_OFF`, immediately cancelling polling coroutine to eliminate CPU wakeups.
 4. **Resumption**: `ACTION_SCREEN_ON` resumes polling coroutine.
-5. **Tile Interaction**: `NetPulseTileService` toggles service state from Samsung Quick Panel.
+5. **Tile Interaction**: `NetPulseTileService` toggles service state from the Android Quick Settings tile.
 
 ## 5. Verification Commands
 ```bash
@@ -227,6 +283,7 @@ Kernel (/proc/net/dev) ──> TrafficDataSource ──> NetPulseService
 ```
 
 ## 6. Recent Iteration Changes
+- **2026-11-02 (j)**: Usage history did not exist. The app stored only today — `DayKeys.RETENTION_DAYS = 2` and no code path ever read a past day, so "this week / this month / all time" were not a missing label but missing data. Fix: retention raised to 35 days so a trailing month has real buckets behind it; new pure `UsageAggregator` rolls the retained ledger into Today / trailing-7-day / trailing-30-day windows; all-time comes from monotonic `lifetime_mobile` / `lifetime_wifi` counters written alongside every day bucket, because pruning deletes day buckets and the preferences file is rewritten in full on every write under the 1 Hz loop, so unbounded day retention is not viable. On upgrade from a build with no counters, `allTime = lifetime.atLeast(seedLifetime(days))` keeps the figure monotonic without a migration row. Device proof on `emulator-5554` with a seeded ledger holding days at 0, 3, 10 and 61 days of age plus counters above the retained sum: Today `977 KB / 1.9 MB`, Week `5.7 MB / 1.9 MB`, Month `15.3 MB / 21.0 MB`, All Time `190.7 MB / 381.5 MB` — all four match the seed exactly, and the 61-day-old bucket is excluded from Month yet counted in All Time, which is only reachable via the counters. Chip selection confirmed by `checked="true"` moving between nodes. The first seeding attempt was wiped because the still-installed 2-day build pruned it before the new APK was installed; re-seeding after the upgrade produced the correct numbers — a real hazard of shipping a retention change, recorded here rather than silently retried. Also fixed in the same change: the battery guide described Samsung One UI on every device; copy moved to pure `BatteryGuideTexts`, and the non-Samsung emulator now renders "Battery Optimization" with generic steps and 0 occurrences of Samsung / One UI / Device Care / Deep Sleeping. 13 new tests (63 total), 0 lint errors (debug and release, 18 warnings). Shipped as v1.6.0.
 - **2026-11-01 (i)**: The Battery tab had two buttons that appeared to do nothing. (1) "Open Battery Exemption Settings" launched `ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, but when the app already held the exemption the platform activity had nothing to ask, so it started and finished instantly (`result code=0`, `topResumedActivity` still `MainActivity`) — a visible flash with no effect. A/B reproduced on the emulator: exempt → nothing opened; exemption removed with `dumpsys deviceidle whitelist -<pkg>` → the "Let app always run in background?" dialog appeared. (2) "Open Samsung Device Care" was rendered on every device; on non-Samsung hardware neither `com.samsung.android.lool` nor `com.samsung.android.sm` exists, so it silently fell through to generic App Info while still claiming to be Device Care, and `isSamsungDevice()` existed but was never called. Fix: `requestIgnoreBatteryOptimizations` returns `BatteryExemptionResult` and short-circuits on `ALREADY_EXEMPT`; the button renders disabled as "Battery Exemption Granted" with a check icon; `BatteryGuideRoute` re-reads the exemption on `ON_RESUME` via `LifecycleEventObserver`; the second button is labelled "Open Samsung Device Care" only when `isSamsungDevice()` is true and "Open App Info" otherwise. Device proof: not exempt → "Open Battery Exemption Settings" → dialog → Allow → `dumpsys deviceidle whitelist` shows `user,com.netpulse.app.debug,10192` → on resume the button reads "Battery Exemption Granted"; tapping it afterwards produced `0` settings intents and left `MainActivity` resumed. 50 tests, 0 lint errors (debug and release). Shipped as v1.5.1.
 - **2026-11-01 (h)**: Usage accounting silently discarded bytes whenever the active transport was neither Wi-Fi nor mobile. `recordConsumption()` called `consumeDelta()`, which clears the pending counters, *before* choosing a bucket; the empty `else -> Unit` then threw those bytes away. Reachable in normal use: `NONE` is reported during a Wi-Fi/cellular handover and before the first network attaches after boot, and `OTHER` is what an always-on VPN reports because VPN capabilities carry the VPN transport rather than the physical one. Fix: `peekDelta()` reads without clearing, `attributeUsage(...)` decides first, and `NetPulseService` only calls `consumeDelta()` once the decision is `Record` or `Drop`. `NONE` now holds the bytes for the next tick, capped at `MAX_HELD_USAGE_BYTES` (64 MB). 8 new tests (50 total), 0 lint errors. Device proof: 8,000,205 B pulled inside the emulator grew the ledger 8,281,951 B; a 40 MB transfer interrupted by disabling Wi-Fi recorded 11,920,639 B against 11,938,537 B of interface traffic with both buckets written. The `NONE` hold path was then proven directly: a transfer cut mid-flight with both radios disabled ran to completion (8,505,189 B) with `Active default network: none` for 8 consecutive seconds, and after restore the ledger delta (8,941,440 B) matched the interface delta (8,855,284 B) with no shortfall. Note that a socket cannot be *opened* while `activeNetwork` is null, so the branch is only reachable by a connection established before the transport disappears — which is exactly the handover case. Shipped as v1.5.0.
 - **2026-11-01 (g)**: Screen-off pause was bypassed by any start that happened while the display was already dark. `NetPulseService` held `isScreenOn = true` as a starting assumption and only ever wrote it from `ScreenStateReceiver` callbacks. Receiver registration delivers future transitions only, so `onStartCommand`'s `pauseWhenScreenOff && !isScreenOn` test read `true` on boot with *Start on boot*, on `MY_PACKAGE_REPLACED`, and on a `START_STICKY` restart, then polled indefinitely with the screen off until the user cycled the display. Fix: `isScreenOn` is now a computed property reading `PowerManager.isInteractive`, and the rule moved to a pure `shouldPoll(pauseWhenScreenOff, screenOn)` in `PollingPolicy.kt` with 2 unit tests (42 total). Reproduced before the fix on `emulator-5554`: `mWakefulness=Asleep`, service started, ledger grew 23,391,976 -> 23,396,972 B (+4,996 B) over 25 s. After the fix, same start: ledger byte-identical across 30 s with `mWakefulness=Asleep`, then grew again on `KEYCODE_WAKEUP`. Lint 0 errors. Shipped as v1.4.9 (tag peels `16dc120`), release assets checksum-verified.

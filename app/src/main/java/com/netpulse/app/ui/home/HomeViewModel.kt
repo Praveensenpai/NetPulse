@@ -29,6 +29,7 @@ sealed interface HomeEvent {
     data class ToggleService(val enabled: Boolean) : HomeEvent
     data object RequestBatteryExemption : HomeEvent
     data object RequestNotificationPermission : HomeEvent
+    data class SelectUsageWindow(val window: UsageWindow) : HomeEvent
 }
 
 class HomeViewModel(application: Application) : AndroidViewModel(application) {
@@ -73,7 +74,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             combine(
                 prefsRepo.preferencesFlow,
-                usageRepo.observeTodayUsage(),
+                usageRepo.observeUsageHistory(),
                 networkMonitor.observeConnection()
             ) { prefs, usage, conn ->
                 Triple(prefs, usage, conn)
@@ -82,7 +83,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.update { current ->
                     current.copy(
                         isServiceEnabled = prefs.isServiceEnabled,
-                        dailyUsage = usage,
+                        usageHistory = usage,
                         networkType = conn.type,
                         showUploadSpeed = prefs.showUploadSpeed,
                         downloadSpeed = SpeedFormatter.formatSpeed(
@@ -127,6 +128,9 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             HomeEvent.RequestBatteryExemption ->
                 BatteryOptimizer.requestIgnoreBatteryOptimizations(getApplication())
             HomeEvent.RequestNotificationPermission -> openNotificationSettings()
+            is HomeEvent.SelectUsageWindow -> _uiState.update {
+                it.copy(selectedWindow = event.window)
+            }
         }
     }
 

@@ -2,6 +2,7 @@ package com.netpulse.app.data.repository
 
 import com.netpulse.app.data.source.LocalDataStore
 import com.netpulse.app.domain.model.DailyUsage
+import com.netpulse.app.domain.model.UsageHistory
 import com.netpulse.app.domain.repository.UsageRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -27,5 +28,9 @@ class UsageRepositoryImpl(
 
     override suspend fun resetTodayUsage() {
         localDataStore.resetUsage()
+    }
+
+    override fun observeUsageHistory(): Flow<UsageHistory> {
+        return localDataStore.observeUsageHistory()
     }
 }

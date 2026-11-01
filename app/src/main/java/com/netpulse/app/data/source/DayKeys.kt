@@ -24,13 +24,17 @@ internal object DayKeys {
     /**
      * How many day buckets to keep, counting today.
      *
-     * Nothing reads a past day: the usage cards and the per-app ledger were
-     * removed, and every consumer only ever asks for today. Yesterday is kept
-     * anyway because it is nearly free and covers a rollover that straddles a
-     * restart; everything older is garbage that DataStore would otherwise
-     * rewrite on every tick forever.
+     * The UI shows today, the trailing week, and the trailing month, so the
+     * ledger has to reach back at least 30 days. A few extra days leave room for
+     * a device that was offline across a boundary. All-time totals do not depend
+     * on this window: they come from lifetime counters that pruning never
+     * touches.
+     *
+     * This stays a bound rather than unbounded storage because the preferences
+     * file is rewritten in full on every write, and writes happen on the 1 Hz
+     * service loop.
      */
-    const val RETENTION_DAYS = 2
+    const val RETENTION_DAYS = 35
 
     private val USAGE_KEY = Regex("""^usage_(\d{4}-\d{2}-\d{2})_(?:mobile|wifi)$""")
 
@@ -102,6 +106,12 @@ internal object DayKeys {
 
     private fun usageKeyDate(key: String): LocalDate? =
         USAGE_KEY.find(key)?.groupValues?.get(1)?.let(::parseKeyDate)
+
+    /** Calendar date for a `yyyy-MM-dd` bucket key, or null when malformed. */
+    fun parseKey(key: String): LocalDate? = parseKeyDate(key)
+
+    /** Calendar date encoded in a `usage_<date>_<transport>` preference name. */
+    fun dateOfUsageKey(key: String): LocalDate? = usageKeyDate(key)
 
     private fun parseKeyDate(key: String): LocalDate? =
         runCatching { LocalDate.parse(key, FORMATTER) }.getOrNull()

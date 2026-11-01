@@ -101,29 +101,31 @@ class DayKeysTest {
     }
 
     @Test
-    fun `keysToPrune keeps today and yesterday`() {
+    fun `keysToPrune keeps the whole 35 day window`() {
+        // 2026-11-01 minus 34 days is 2026-09-28, the oldest retained day.
         val keys = setOf(
             "usage_2026-11-01_mobile",
-            "usage_2026-11-01_wifi",
-            "usage_2026-10-31_mobile",
-            "usage_2026-10-31_wifi"
+            "usage_2026-10-15_wifi",
+            "usage_2026-09-28_mobile",
+            "usage_2026-09-27_wifi"
         )
-        assertThat(DayKeys.keysToPrune(keys, "2026-11-01")).isEmpty()
+        assertThat(DayKeys.keysToPrune(keys, "2026-11-01"))
+            .containsExactly("usage_2026-09-27_wifi")
     }
 
     @Test
     fun `keysToPrune drops buckets older than the window`() {
         val keys = setOf(
             "usage_2026-11-01_wifi",
-            "usage_2026-10-31_wifi",
-            "usage_2026-10-30_mobile",
             "usage_2026-10-30_wifi",
+            "usage_2026-10-29_mobile",
+            "usage_2026-10-29_wifi",
             "usage_2026-10-25_mobile"
         )
-        assertThat(DayKeys.keysToPrune(keys, "2026-11-01"))
+        assertThat(DayKeys.keysToPrune(keys, "2026-11-01", retentionDays = 3))
             .containsExactly(
-                "usage_2026-10-30_mobile",
-                "usage_2026-10-30_wifi",
+                "usage_2026-10-29_mobile",
+                "usage_2026-10-29_wifi",
                 "usage_2026-10-25_mobile"
             )
     }
@@ -134,20 +136,21 @@ class DayKeysTest {
             "service_enabled",
             "show_notification",
             "overlay_alpha",
-            "usage_2026-10-01_wifi"
+            "lifetime_mobile",
+            "usage_2026-08-01_wifi"
         )
         assertThat(DayKeys.keysToPrune(keys, "2026-11-01"))
-            .containsExactly("usage_2026-10-01_wifi")
+            .containsExactly("usage_2026-08-01_wifi")
     }
 
     @Test
     fun `keysToPrune keeps future-dated keys`() {
         val keys = setOf(
             "usage_2026-11-05_wifi",
-            "usage_2026-10-01_wifi"
+            "usage_2026-08-01_wifi"
         )
         assertThat(DayKeys.keysToPrune(keys, "2026-11-01"))
-            .containsExactly("usage_2026-10-01_wifi")
+            .containsExactly("usage_2026-08-01_wifi")
     }
 
     @Test
@@ -167,7 +170,7 @@ class DayKeysTest {
             "usage_2026-10-31_wifi",
             "usage_2026-10-30_wifi"
         )
-        assertThat(DayKeys.keysToPrune(keys, "2026-11-01"))
+        assertThat(DayKeys.keysToPrune(keys, "2026-11-01", retentionDays = 2))
             .containsExactly("usage_2026-10-30_wifi")
     }
 }
