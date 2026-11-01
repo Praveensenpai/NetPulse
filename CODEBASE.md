@@ -90,16 +90,28 @@ Kernel (/proc/net/dev) ──> TrafficDataSource ──> NetPulseService
   ```
 - **Consumers**: `NetPulseService`, `HomeViewModel`.
 
-### `com.netpulse.app.data.source.LocalDataStore` (Role: data, Lines: 203)
-- **Responsibility**: DataStore Preferences manager for application settings and daily usage history.
+### `com.netpulse.app.data.source.LocalDataStore` (Role: data, Lines: 122)
+- **Responsibility**: DataStore Preferences manager for application settings and daily usage history. The usage read path follows the calendar: `observeDailyUsage()` re-derives the day key on a ticker instead of resolving it once, so the total rolls over at local midnight without a restart.
 - **Public Functions**:
   ```kotlin
   val meterPreferencesFlow: Flow<MeterPreferences>
-  fun observeDailyUsage(dateKey: String): Flow<DailyUsage>
-  suspend fun addUsage(dateKey: String, mobileDelta: Long, wifiDelta: Long)
-  suspend fun resetUsage(dateKey: String)
+  fun getTodayKey(): String
+  fun observeDailyUsage(): Flow<DailyUsage>
+  suspend fun addUsage(dateKey: String = getTodayKey(), mobileDelta: Long, wifiDelta: Long)
+  suspend fun resetUsage(dateKey: String = getTodayKey())
   ```
 - **Consumers**: `PreferencesRepositoryImpl`, `UsageRepositoryImpl`.
+
+### `com.netpulse.app.data.source.DayKeys` (Role: data, Lines: 73)
+- **Responsibility**: Pure `java.time` day-bucket arithmetic with no Android types, so it is unit-testable. Owns the `yyyy-MM-dd` key format, next-midnight calculation, and the day-key ticker that drives the usage rollover.
+- **Public Functions**:
+  ```kotlin
+  fun keyFor(nowMs: Long, zone: ZoneId): String
+  fun nextMidnightMs(nowMs: Long, zone: ZoneId): Long
+  fun dayKeyTicker(clock: () -> Long, zone: ZoneId, recheckMs: Long = RECHECK_MS): Flow<String>
+  ```
+- **Consumers**: `LocalDataStore`.
+- **Note**: Uses `Instant.atZone(...).toLocalDate()` rather than `LocalDate.ofInstant`, which is API 34 and would break the API 33 floor.
 
 ### `com.netpulse.app.service.NetPulseService` (Role: service, Lines: 246)
 - **Responsibility**: Foreground service managing low-overhead 1Hz polling loop with screen-off pause.
@@ -176,6 +188,7 @@ Kernel (/proc/net/dev) ──> TrafficDataSource ──> NetPulseService
 ```
 
 ## 6. Recent Iteration Changes
+- **2026-11-01 (d)**: Daily usage counter froze at midnight until an app restart. `observeDailyUsage(dateKey: String = getTodayKey())` evaluated its default argument once, when the Flow was subscribed, so the key was baked into the `map` closure forever; `addUsage()` called `getTodayKey()` fresh on every write. Post-midnight writes therefore landed on `usage_2026-11-02_*` while the UI, notification, and overlay stayed subscribed to `usage_2026-11-01_*`. Proof from the stored protobuf after crossing midnight with the process alive: `11-01_wifi = 168,826,534 B` (160.9 MB, on screen) alongside `11-02_wifi = 21,835,663 B` (20.8 MB, invisible). Fix: extracted `DayKeys` (pure `java.time`, 73 lines) providing `keyFor`, `nextMidnightMs`, and a `dayKeyTicker` that re-reads the clock every `RECHECK_MS = 30_000` and `distinctUntilChanged()`; `observeDailyUsage()` now `flatMapLatest`s over that ticker. `LocalDataStore` shrank 203 -> 122 lines. 8 new tests (42 total). Device proof on `emulator-5554` after the fix, no restart: card moved 160.9 MB -> 63.3 MB, matching stored `11-02_wifi = 66,333,995 B` byte for byte. Lint initially failed with `NewApi` on `LocalDate.ofInstant` (API 34); switched to `Instant.atZone(...).toLocalDate()` and lint returned to 0 errors.
 - **2026-11-01 (c)**: Glyph finalised. The two-run stacked design shipped in v1.4.5 measured 15x37 px on device, not the 39x28 px the notes claimed: stacking the unit under the number overflows the 26 px status-bar row, so the ink read as broken. Replaced with a single centred run sized per label against both canvas dimensions, so no `textScaleX` is ever applied and no label is distorted. Labels cap at three characters, the decimal is dropped (`5.8M` -> `5M`), and three-digit values promote to the next unit (`988K` -> `1M`) instead of truncating. Device measurements on `emulator-5554`: glyph ink 24-28 px tall vs a 27 px clock across captures (24 px for the two-character release-build frame, 27-28 px in debug builds), with natural glyph aspect at every length. A 192x96 wide-canvas probe proved the platform scales small icons by width into a square slot, which is why the canvas must stay square and be filled edge to edge.
 - **2026-11-01 (b)**: Removed Live App Usage and Usage Log. They worked (seeded rows, byte-exact log) but a list of `0 B/s` rows reads as broken when the phone is idle, and the per-UID sweep needed ~50 s to cover every UID. Deleted `AppUsageTracker`, `AppUsageDataSource`, `AppUsageCard`, `UsageLogCard`, `AppUsage`, `UsageLogEntry`, both test files, the DataStore log/snapshot keys and codecs, `PACKAGE_USAGE_STATS`, and the `RequestUsageAccess` event. Restart-gap recovery and the midnight baseline went with them. Glyph rewritten at the same time: `SpeedIconGenerator` no longer applies `textScaleX`, which squashed digits horizontally while height stayed fixed — the stretch. It now draws the number and a smaller unit as two runs at natural width, sizing the font from measured digit ink (`getTextBounds`) rather than `fontMetrics`, whose ascender/descender padding had left the number at half the canvas height. Measured on `emulator-5554`: ink 39x28 px, matching the clock cap height; 17 unit tests green, lint 0 errors.
 - **2026-11-01**: Live App Usage card showed nothing for the first minute after a restart. Not a stuck sweep: `NetworkStatsManager` publishes per-UID buckets lazily, so the first polls return package keys with 0 bytes and the `total > 0` filter hides them, leaving "Waiting for the first sample…". Fix: `NetPulseService.startMonitoring()` seeds the tracker from today's persisted log before the poll loop; `AppUsageTracker` holds each seed for `SEED_CARRY_MS = 180_000` and drops it only when the sweep reports a **positive** total (a presence test would drop every seed on the first 0-byte sweep, which the first implementation did and the device caught). Extracted `seedTotals(log, dayStartMs)` and `seededRows(seeded, measured)` as pure companion functions so the rule is unit-testable. 10 unit tests green, lint 0 errors, device proof: 5 s after restart the card listed 8 rows at `0 B/s` matching the `12:00` log entries, where the previous build showed the waiting placeholder.

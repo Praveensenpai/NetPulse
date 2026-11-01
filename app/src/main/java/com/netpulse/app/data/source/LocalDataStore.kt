@@ -13,12 +13,12 @@ import com.netpulse.app.core.Constants
 import com.netpulse.app.domain.model.DailyUsage
 import com.netpulse.app.domain.model.MeterPreferences
 
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import java.time.ZoneId
 
 val Context.preferencesDataStore: DataStore<Preferences> by preferencesDataStore(name = Constants.PREFS_DATASTORE_NAME)
 val Context.usageDataStore: DataStore<Preferences> by preferencesDataStore(name = Constants.USAGE_DATASTORE_NAME)
@@ -69,12 +69,24 @@ class LocalDataStore(private val context: Context) {
         }
     }
 
-    fun getTodayKey(): String {
-        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
-        return sdf.format(Date())
-    }
+    fun getTodayKey(): String = DayKeys.keyFor(System.currentTimeMillis(), ZoneId.systemDefault())
 
-    fun observeDailyUsage(dateKey: String = getTodayKey()): Flow<DailyUsage> {
+    /**
+     * Today's usage, following the calendar as it advances.
+     *
+     * The day key is re-read on a ticker rather than resolved once, because a
+     * key captured at subscription time keeps the collector on the day the
+     * process started: writes move to the new day's key while the UI shows
+     * yesterday's total until the app restarts.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun observeDailyUsage(): Flow<DailyUsage> =
+        DayKeys.dayKeyTicker(
+            clock = System::currentTimeMillis,
+            zone = ZoneId.systemDefault()
+        ).flatMapLatest { dateKey -> usageFor(dateKey) }
+
+    private fun usageFor(dateKey: String): Flow<DailyUsage> {
         val mobileKey = longPreferencesKey("usage_${dateKey}_mobile")
         val wifiKey = longPreferencesKey("usage_${dateKey}_wifi")
         return context.usageDataStore.data.map { prefs ->
