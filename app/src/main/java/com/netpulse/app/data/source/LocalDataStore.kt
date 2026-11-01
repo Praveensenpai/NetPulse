@@ -188,12 +188,29 @@ class LocalDataStore(private val context: Context) {
         lastPrunedDayKey = todayKey
     }
 
+    /**
+     * Zeroes one day's bucket and removes the same bytes from the lifetime
+     * counters.
+     *
+     * Without the counter adjustment a reset would leave Today at 0 while All
+     * Time kept the discarded bytes, so the same screen would report a total
+     * that includes usage it just claimed to delete. The arithmetic lives in
+     * [UsageAggregator.reducedLifetime] so it is unit-testable without an
+     * Android context.
+     */
     suspend fun resetUsage(dateKey: String = getTodayKey()) {
         val mobileKey = longPreferencesKey("usage_${dateKey}_mobile")
         val wifiKey = longPreferencesKey("usage_${dateKey}_wifi")
         context.usageDataStore.edit { prefs ->
+            val removed = UsageRange(
+                mobileBytes = prefs[mobileKey] ?: 0L,
+                wifiBytes = prefs[wifiKey] ?: 0L
+            )
             prefs[mobileKey] = 0L
             prefs[wifiKey] = 0L
+            val reduced = UsageAggregator.reducedLifetime(lifetimeOf(prefs), removed)
+            prefs[PrefKeys.LIFETIME_MOBILE] = reduced.mobileBytes
+            prefs[PrefKeys.LIFETIME_WIFI] = reduced.wifiBytes
         }
     }
 

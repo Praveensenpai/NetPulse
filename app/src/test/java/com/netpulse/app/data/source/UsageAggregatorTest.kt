@@ -106,6 +106,36 @@ class UsageAggregatorTest {
     }
 
     @Test
+    fun `reduced lifetime subtracts the discarded bytes`() {
+        val lifetime = UsageRange(mobileBytes = 500, wifiBytes = 800)
+        val removed = UsageRange(mobileBytes = 200, wifiBytes = 300)
+
+        val result = UsageAggregator.reducedLifetime(lifetime, removed)
+
+        assertThat(result).isEqualTo(UsageRange(300, 500))
+    }
+
+    @Test
+    fun `reduced lifetime never goes below zero`() {
+        // A day bucket written before the counters existed can exceed them.
+        val lifetime = UsageRange(mobileBytes = 10, wifiBytes = 5)
+        val removed = UsageRange(mobileBytes = 400, wifiBytes = 90)
+
+        val result = UsageAggregator.reducedLifetime(lifetime, removed)
+
+        assertThat(result).isEqualTo(UsageRange.ZERO)
+    }
+
+    @Test
+    fun `reducing by zero leaves lifetime untouched`() {
+        val lifetime = UsageRange(mobileBytes = 42, wifiBytes = 7)
+
+        val result = UsageAggregator.reducedLifetime(lifetime, UsageRange.ZERO)
+
+        assertThat(result).isEqualTo(lifetime)
+    }
+
+    @Test
     fun `unparseable today key falls back to lifetime only`() {
         val result = UsageAggregator.aggregate(
             days = listOf(day(today, 7, 7)),

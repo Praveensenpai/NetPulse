@@ -68,4 +68,17 @@ internal object UsageAggregator {
         days.fold(UsageRange.ZERO) { acc, day ->
             acc + UsageRange(day.mobileBytes, day.wifiBytes)
         }
+
+    /**
+     * Lifetime totals after [removed] bytes are discarded from the ledger.
+     *
+     * A reset has to subtract from the counters as well as the day bucket, or
+     * All Time keeps reporting usage the same screen just deleted. Clamped at
+     * zero because a bucket written before the counters existed can be larger
+     * than the counter value.
+     */
+    fun reducedLifetime(lifetime: UsageRange, removed: UsageRange): UsageRange = UsageRange(
+        mobileBytes = (lifetime.mobileBytes - removed.mobileBytes).coerceAtLeast(0L),
+        wifiBytes = (lifetime.wifiBytes - removed.wifiBytes).coerceAtLeast(0L)
+    )
 }
