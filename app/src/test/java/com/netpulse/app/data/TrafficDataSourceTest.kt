@@ -79,6 +79,44 @@ class TrafficDataSourceTest {
     }
 
     @Test
+    fun peekDelta_reportsBytesWithoutClearingThem() {
+        val fake = FakeTrafficStatsProvider(rx = 0L, tx = 0L, timeMs = 1000L)
+        val dataSource = TrafficDataSource(fake)
+        dataSource.sample()
+
+        fake.rx = 8192L
+        fake.tx = 4096L
+        fake.timeMs = 2000L
+        dataSource.sample()
+
+        assertThat(dataSource.peekDelta().totalBytes).isEqualTo(12_288L)
+        // A second peek must observe the same bytes: nothing was consumed.
+        assertThat(dataSource.peekDelta().totalBytes).isEqualTo(12_288L)
+
+        assertThat(dataSource.consumeDelta().totalBytes).isEqualTo(12_288L)
+        assertThat(dataSource.peekDelta().totalBytes).isEqualTo(0L)
+    }
+
+    @Test
+    fun sample_whilePeekingKeepsAccumulatingIntoOneDelta() {
+        val fake = FakeTrafficStatsProvider(rx = 0L, tx = 0L, timeMs = 1000L)
+        val dataSource = TrafficDataSource(fake)
+        dataSource.sample()
+
+        fake.rx = 1000L
+        fake.timeMs = 2000L
+        dataSource.sample()
+        dataSource.peekDelta()
+
+        fake.rx = 3000L
+        fake.timeMs = 3000L
+        dataSource.sample()
+
+        // The first 1000 bytes were held, not lost, so the committed total is 3000.
+        assertThat(dataSource.consumeDelta().rxBytes).isEqualTo(3000L)
+    }
+
+    @Test
     fun consumeDelta_afterSlowTick_reflectsRealBytesNotRate() {
         val fake = FakeTrafficStatsProvider(rx = 0L, tx = 0L, timeMs = 1000L)
         val dataSource = TrafficDataSource(fake)

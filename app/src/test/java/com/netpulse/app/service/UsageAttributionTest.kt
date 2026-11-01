@@ -1,0 +1,59 @@
+package com.netpulse.app.service
+
+import com.google.common.truth.Truth.assertThat
+import com.netpulse.app.core.ActiveNetworkType
+import org.junit.Test
+
+class UsageAttributionTest {
+
+    @Test
+    fun `wifi bytes go to the wifi bucket`() {
+        val result = attributeUsage(ActiveNetworkType.WIFI, 4096L)
+
+        assertThat(result).isEqualTo(UsageAttribution.Record(mobileBytes = 0L, wifiBytes = 4096L))
+    }
+
+    @Test
+    fun `mobile bytes go to the mobile bucket`() {
+        val result = attributeUsage(ActiveNetworkType.MOBILE, 2048L)
+
+        assertThat(result).isEqualTo(UsageAttribution.Record(mobileBytes = 2048L, wifiBytes = 0L))
+    }
+
+    @Test
+    fun `unknown transport holds bytes for the next tick`() {
+        assertThat(attributeUsage(ActiveNetworkType.NONE, 1024L))
+            .isEqualTo(UsageAttribution.Hold)
+    }
+
+    @Test
+    fun `transport without a bucket is dropped rather than misattributed`() {
+        assertThat(attributeUsage(ActiveNetworkType.ETHERNET, 1024L))
+            .isEqualTo(UsageAttribution.Drop)
+        assertThat(attributeUsage(ActiveNetworkType.OTHER, 1024L))
+            .isEqualTo(UsageAttribution.Drop)
+    }
+
+    @Test
+    fun `no measured bytes is a no-op`() {
+        assertThat(attributeUsage(ActiveNetworkType.WIFI, 0L)).isEqualTo(UsageAttribution.Drop)
+        assertThat(attributeUsage(ActiveNetworkType.NONE, -5L)).isEqualTo(UsageAttribution.Drop)
+    }
+
+    @Test
+    fun `held bytes stop accumulating at the ceiling`() {
+        val atLimit = attributeUsage(
+            ActiveNetworkType.NONE,
+            deltaBytes = 1024L,
+            heldBytes = MAX_HELD_USAGE_BYTES - 1024L
+        )
+        assertThat(atLimit).isEqualTo(UsageAttribution.Hold)
+
+        val overLimit = attributeUsage(
+            ActiveNetworkType.NONE,
+            deltaBytes = 1024L,
+            heldBytes = MAX_HELD_USAGE_BYTES
+        )
+        assertThat(overLimit).isEqualTo(UsageAttribution.Drop)
+    }
+}

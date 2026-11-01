@@ -129,6 +129,27 @@ Kernel (/proc/net/dev) ──> TrafficDataSource ──> NetPulseService
 - **Consumers**: `NetPulseService` (`onStartCommand`, `onScreenStateChanged`).
 - **Note**: Decides only *whether* to poll. The caller must still read the real display state, because receiver registration reports transitions, not current state.
 
+### `com.netpulse.app.service.UsageAttribution` (Role: service, Lines: 56)
+- **Responsibility**: Pure rule deciding what happens to the bytes measured since the last tick: record them, hold them, or drop them.
+- **Public API**:
+  ```kotlin
+  internal const val MAX_HELD_USAGE_BYTES = 64L * 1024 * 1024
+
+  internal sealed interface UsageAttribution {
+      data class Record(val mobileBytes: Long, val wifiBytes: Long) : UsageAttribution
+      data object Hold : UsageAttribution
+      data object Drop : UsageAttribution
+  }
+
+  internal fun attributeUsage(
+      type: ActiveNetworkType,
+      deltaBytes: Long,
+      heldBytes: Long = 0L
+  ): UsageAttribution
+  ```
+- **Consumers**: `NetPulseService.recordConsumption`.
+- **Note**: `NONE` holds bytes for the next tick because it is the handover and pre-attach state. `ETHERNET` and `OTHER` drop them: there is no bucket, and carrying them forward would misattribute to whichever transport appeared next. `OTHER` is what an always-on VPN reports, since VPN capabilities carry the VPN transport instead of the physical one. The hold ceiling stops a long outage from dumping an unbounded figure into a later day.
+
 ### `com.netpulse.app.service.ScreenStateReceiver` (Role: service, Lines: 40)
 - **Responsibility**: Pauses/resumes polling loop upon display power state changes.
 - **Public Functions**:
@@ -202,6 +223,7 @@ Kernel (/proc/net/dev) ──> TrafficDataSource ──> NetPulseService
 ```
 
 ## 6. Recent Iteration Changes
+- **2026-11-01 (h)**: Usage accounting silently discarded bytes whenever the active transport was neither Wi-Fi nor mobile. `recordConsumption()` called `consumeDelta()`, which clears the pending counters, *before* choosing a bucket; the empty `else -> Unit` then threw those bytes away. Reachable in normal use: `NONE` is reported during a Wi-Fi/cellular handover and before the first network attaches after boot, and `OTHER` is what an always-on VPN reports because VPN capabilities carry the VPN transport rather than the physical one. Fix: `peekDelta()` reads without clearing, `attributeUsage(...)` decides first, and `NetPulseService` only calls `consumeDelta()` once the decision is `Record` or `Drop`. `NONE` now holds the bytes for the next tick, capped at `MAX_HELD_USAGE_BYTES` (64 MB). 8 new tests (50 total), 0 lint errors. Device proof: 8,000,205 B pulled inside the emulator grew the ledger 8,281,951 B; a 40 MB transfer interrupted by disabling Wi-Fi recorded 11,920,639 B against 11,938,537 B of interface traffic with both buckets written. Shipped as v1.5.0.
 - **2026-11-01 (g)**: Screen-off pause was bypassed by any start that happened while the display was already dark. `NetPulseService` held `isScreenOn = true` as a starting assumption and only ever wrote it from `ScreenStateReceiver` callbacks. Receiver registration delivers future transitions only, so `onStartCommand`'s `pauseWhenScreenOff && !isScreenOn` test read `true` on boot with *Start on boot*, on `MY_PACKAGE_REPLACED`, and on a `START_STICKY` restart, then polled indefinitely with the screen off until the user cycled the display. Fix: `isScreenOn` is now a computed property reading `PowerManager.isInteractive`, and the rule moved to a pure `shouldPoll(pauseWhenScreenOff, screenOn)` in `PollingPolicy.kt` with 2 unit tests (42 total). Reproduced before the fix on `emulator-5554`: `mWakefulness=Asleep`, service started, ledger grew 23,391,976 -> 23,396,972 B (+4,996 B) over 25 s. After the fix, same start: ledger byte-identical across 30 s with `mWakefulness=Asleep`, then grew again on `KEYCODE_WAKEUP`. Lint 0 errors. Shipped as v1.4.9 (tag peels `16dc120`), release assets checksum-verified.
 - **2026-11-01 (f)**: CI and Release ran no lint step, so a `NewApi` violation would pass every gate and ship. This was not hypothetical: the midnight fix in `2026-11-01 (d)` first used `LocalDate.ofInstant` (API 34) against `minSdk = 33`, failed lint locally, and the corrected build was released — but only because the mistake was caught by hand before pushing. `ci.yml` ran `testDebugUnitTest` and `assembleDebug`; `release.yml` ran `testDebugUnitTest` and `assembleRelease`. Neither ever invoked `lint*`. Fix: `./gradlew lintDebug --no-daemon` added to CI after unit tests, `./gradlew lintRelease --no-daemon` added to Release after unit tests. Proof the gate blocks rather than warns: re-injecting `LocalDate.ofInstant` into `DayKeys.keyFor` made `lintDebug` exit `BUILD FAILED` with `Error: Call requires API level 34 ... [NewApi]`, and reverting restored `BUILD SUCCESSFUL`. Current tree: 0 lint errors, 18 warnings (debug and release variants).
 - **2026-11-01 (e)**: Usage ledger grew without bound. A pair of DataStore keys (`usage_YYYY-MM-DD_mobile` / `_wifi`) was written per day and nothing ever removed them: `resetUsage()` only zeroed today's pair, and after the per-app usage screens were deleted in `2026-11-01 (b)` no code path read a past day at all. DataStore rewrites and fsyncs the entire preferences protobuf on every `edit`, and `addUsage()` runs on the 1 Hz service loop, so every dead day was paid for continuously rather than once. Fix: `DayKeys.keysToPrune(keys, todayKey, retentionDays)` is a pure function returning stale usage keys, deliberately conservative - it ignores names it cannot parse and keeps future-dated keys so a backwards clock skew cannot delete data. `LocalDataStore.pruneOldUsage()` applies it after the write, at most once per day (guarded by `lastPrunedDayKey`). `RETENTION_DAYS = 2` keeps today and yesterday, the latter purely to cover a rollover straddling a restart. 6 new tests (40 total, 14 in `DayKeysTest`), lint 0 errors. Device proof on `emulator-5554`: seeded `usage_2026-10-25_*`, `2026-10-20_*`, `2026-10-18_*` by back-dating the clock and generating traffic, then jumped to 2026-11-01 and wrote bytes. All three stale pairs were swept; the file went to 63 bytes holding only `usage_2026-11-01_wifi = 21,907,483 B`, matching the 20.9 MB on screen byte for byte.

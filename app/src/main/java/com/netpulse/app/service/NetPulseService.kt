@@ -8,7 +8,6 @@ import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import com.netpulse.app.NetPulseApp
-import com.netpulse.app.core.ActiveNetworkType
 import com.netpulse.app.core.Constants
 import com.netpulse.app.core.TelemetryManager
 import com.netpulse.app.domain.model.DailyUsage
@@ -174,15 +173,27 @@ class NetPulseService : Service() {
         }
     }
 
-    /** Uses exact byte counters rather than the rate so gaps never skew the ledger. */
+    /**
+     * Uses exact byte counters rather than the rate so gaps never skew the ledger.
+     *
+     * The decision is made before the counters are cleared: an unknown transport
+     * holds the bytes for the next tick instead of discarding them.
+     */
     private suspend fun recordConsumption(app: NetPulseApp) {
-        val delta = app.trafficDataSource.consumeDelta()
+        val delta = app.trafficDataSource.peekDelta()
         if (delta.totalBytes <= 0L) return
 
-        when (app.networkMonitor.getCurrentConnection().type) {
-            ActiveNetworkType.WIFI -> app.usageRepository.recordUsage(0L, delta.totalBytes)
-            ActiveNetworkType.MOBILE -> app.usageRepository.recordUsage(delta.totalBytes, 0L)
-            else -> Unit
+        val type = app.networkMonitor.getCurrentConnection().type
+        when (val attribution = attributeUsage(type, delta.totalBytes)) {
+            is UsageAttribution.Record -> {
+                app.trafficDataSource.consumeDelta()
+                app.usageRepository.recordUsage(
+                    mobileDelta = attribution.mobileBytes,
+                    wifiDelta = attribution.wifiBytes
+                )
+            }
+            UsageAttribution.Hold -> Unit
+            UsageAttribution.Drop -> app.trafficDataSource.consumeDelta()
         }
     }
 

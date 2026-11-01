@@ -67,12 +67,22 @@ class TrafficDataSource(
     }
 
     /**
+     * Returns the exact byte counts observed since the previous [consumeDelta]
+     * without clearing them.
+     *
+     * Usage accounting must decide whether the bytes can be attributed before it
+     * commits to clearing them. Reading and clearing in one step forced the caller
+     * to drop bytes whenever the active transport was unknown.
+     */
+    fun peekDelta(): TrafficDelta = TrafficDelta(pendingRxDelta, pendingTxDelta)
+
+    /**
      * Returns the exact byte counts observed since the previous call and clears them.
      * Usage accounting must use this instead of the per-second rate, otherwise gaps
      * (screen-off, slow ticks) silently under- or over-report consumption.
      */
     fun consumeDelta(): TrafficDelta {
-        val delta = TrafficDelta(pendingRxDelta, pendingTxDelta)
+        val delta = peekDelta()
         pendingRxDelta = 0L
         pendingTxDelta = 0L
         return delta
