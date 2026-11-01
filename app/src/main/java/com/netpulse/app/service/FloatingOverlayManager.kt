@@ -14,7 +14,6 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.TextView
-import com.netpulse.app.core.SpeedFormatter
 import com.netpulse.app.domain.model.SpeedSnapshot
 
 class FloatingOverlayManager(private val context: Context) {
@@ -122,11 +121,18 @@ class FloatingOverlayManager(private val context: Context) {
         isShowing = true
     }
 
-    fun updateSpeed(speed: SpeedSnapshot, unitInBits: Boolean = false) {
+    fun updateSpeed(
+        speed: SpeedSnapshot,
+        unitInBits: Boolean = false,
+        showUpload: Boolean = true
+    ) {
         if (!isShowing) return
-        val dl = SpeedFormatter.formatSpeed(speed.downloadBytesPerSec, unitInBits)
-        val ul = SpeedFormatter.formatSpeed(speed.uploadBytesPerSec, unitInBits)
-        val text = "↓ ${dl.displayString}  ↑ ${ul.displayString}"
+        val text = OverlayLabel.format(
+            downloadBytesPerSec = speed.downloadBytesPerSec,
+            uploadBytesPerSec = speed.uploadBytesPerSec,
+            unitInBits = unitInBits,
+            showUpload = showUpload
+        )
         mainHandler.post {
             if (isShowing) overlayView?.text = text
         }

@@ -193,7 +193,11 @@ class NetPulseService : Service() {
                 pushNotification(snapshot)
 
                 if (currentPreferences.showFloatingOverlay) {
-                    overlayManager.updateSpeed(snapshot, currentPreferences.unitInBits)
+                    overlayManager.updateSpeed(
+                        snapshot,
+                        unitInBits = currentPreferences.unitInBits,
+                        showUpload = currentPreferences.showUploadSpeed
+                    )
                 }
 
                 delay(Constants.DEFAULT_REFRESH_INTERVAL_MS)
