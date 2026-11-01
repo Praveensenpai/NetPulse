@@ -182,7 +182,10 @@ class NetPulseService : Service() {
     private fun startMonitoring() {
         if (pollingJob?.isActive == true) return
         val app = NetPulseApp.instance
-        app.trafficDataSource.reset()
+        // Resuming after a screen-off pause must not erase the bytes that moved
+        // while polling was stopped. Re-baseline and keep the gap for the ledger
+        // instead of dropping the baseline outright.
+        app.trafficDataSource.catchUp()
 
         pollingJob = serviceScope.launch {
             while (isActive) {
@@ -244,6 +247,10 @@ class NetPulseService : Service() {
     private fun stopMonitoring() {
         pollingJob?.cancel()
         pollingJob = null
+        // A stopped service drops the byte baseline: bytes moved while the user
+        // had monitoring switched off are not ours to attribute. Pauses, which
+        // keep the service alive, go through catchUp() instead.
+        NetPulseApp.instance.trafficDataSource.reset()
         TelemetryManager.reset()
         overlayManager.hide()
     }

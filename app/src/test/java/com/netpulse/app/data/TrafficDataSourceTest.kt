@@ -131,4 +131,63 @@ class TrafficDataSourceTest {
         assertThat(snapshot.downloadBytesPerSec).isEqualTo(10_000L)
         assertThat(dataSource.consumeDelta().rxBytes).isEqualTo(100_000L)
     }
+
+    @Test
+    fun catchUp_keepsBytesTransferredWhilePollingWasStopped() {
+        val fake = FakeTrafficStatsProvider(rx = 1000L, tx = 500L, timeMs = 1000L)
+        val dataSource = TrafficDataSource(fake)
+        dataSource.sample()
+
+        // Polling paused here. 20 MB moves before the loop resumes.
+        fake.rx = 21_000_000L
+        fake.tx = 500L
+        fake.timeMs = 60_000L
+
+        dataSource.catchUp()
+
+        // The gap must be attributed, not discarded like reset() did.
+        assertThat(dataSource.peekDelta().rxBytes).isEqualTo(20_999_000L)
+    }
+
+    @Test
+    fun catchUp_doesNotReportTheGapAsASpeedSpike() {
+        val fake = FakeTrafficStatsProvider(rx = 0L, tx = 0L, timeMs = 1000L)
+        val dataSource = TrafficDataSource(fake)
+        dataSource.sample()
+
+        fake.rx = 20_000_000L
+        fake.timeMs = 60_000L
+        dataSource.catchUp()
+
+        // The next tick sees only its own interval, so the overlay does not
+        // flash 20 MB/s of catch-up traffic that already finished.
+        fake.rx = 20_000_100L
+        fake.timeMs = 61_000L
+        val snapshot = dataSource.sample()
+        assertThat(snapshot.downloadBytesPerSec).isEqualTo(100L)
+    }
+
+    @Test
+    fun catchUp_afterDeviceReboot_neverProducesNegativeDelta() {
+        val fake = FakeTrafficStatsProvider(rx = 50_000L, tx = 20_000L, timeMs = 1000L)
+        val dataSource = TrafficDataSource(fake)
+        dataSource.sample()
+
+        fake.rx = 100L
+        fake.tx = 50L
+        fake.timeMs = 2000L
+        dataSource.catchUp()
+
+        assertThat(dataSource.peekDelta().totalBytes).isEqualTo(0L)
+    }
+
+    @Test
+    fun catchUp_beforeFirstSample_isANoOp() {
+        val fake = FakeTrafficStatsProvider(rx = 1234L, tx = 567L, timeMs = 1000L)
+        val dataSource = TrafficDataSource(fake)
+
+        dataSource.catchUp()
+
+        assertThat(dataSource.peekDelta().totalBytes).isEqualTo(0L)
+    }
 }

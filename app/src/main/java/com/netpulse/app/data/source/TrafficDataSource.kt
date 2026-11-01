@@ -27,6 +27,31 @@ class TrafficDataSource(
         pendingTxDelta = 0L
     }
 
+    /**
+     * Folds traffic moved while polling was stopped into the pending delta.
+     *
+     * [reset] discards the byte baseline, so every byte transferred between the
+     * last sample and the resume became invisible to the ledger: a screen-off
+     * interval silently erased that period's usage. Re-baselining here instead
+     * keeps the gap and returns the next tick's rate to normal.
+     *
+     * Safe to call before the first sample and across counter resets; both are
+     * no-ops rather than negative deltas.
+     */
+    fun catchUp() {
+        if (lastRxBytes < 0 || lastTxBytes < 0) return
+        val currentRx = trafficStatsProvider.getTotalRxBytes()
+        val currentTx = trafficStatsProvider.getTotalTxBytes()
+        if (currentRx < 0 || currentTx < 0) return
+
+        if (currentRx >= lastRxBytes) pendingRxDelta += currentRx - lastRxBytes
+        if (currentTx >= lastTxBytes) pendingTxDelta += currentTx - lastTxBytes
+
+        lastRxBytes = currentRx
+        lastTxBytes = currentTx
+        lastTimestampMs = trafficStatsProvider.getElapsedRealtimeMs()
+    }
+
     fun sample(): SpeedSnapshot {
         val currentRx = trafficStatsProvider.getTotalRxBytes()
         val currentTx = trafficStatsProvider.getTotalTxBytes()
