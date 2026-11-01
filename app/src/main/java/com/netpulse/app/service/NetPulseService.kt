@@ -1,10 +1,12 @@
 package com.netpulse.app.service
 
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import com.netpulse.app.NetPulseApp
 import com.netpulse.app.core.ActiveNetworkType
 import com.netpulse.app.core.Constants
@@ -26,13 +28,25 @@ class NetPulseService : Service() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var pollingJob: Job? = null
-    private var isScreenOn = true
     private var currentPreferences = MeterPreferences()
     private var todayUsage = DailyUsage(dateKey = "")
 
     private lateinit var notificationManager: SpeedNotificationManager
     private lateinit var overlayManager: FloatingOverlayManager
     private lateinit var screenReceiver: ScreenStateReceiver
+
+    /**
+     * Live display state, read from the platform instead of cached.
+     *
+     * A cached flag starts at an assumed value that only the next broadcast
+     * corrects, and registering [ScreenStateReceiver] delivers future
+     * transitions only. Any start that happens while the display is already
+     * dark (boot, package replace, sticky restart) would otherwise poll with
+     * the screen off until the user cycled the display.
+     */
+    private val isScreenOn: Boolean
+        get() = (getSystemService(Context.POWER_SERVICE) as? PowerManager)
+            ?.isInteractive ?: true
 
     override fun onCreate() {
         super.onCreate()
@@ -58,10 +72,10 @@ class NetPulseService : Service() {
             }
             else -> {
                 startForegroundWithNotification()
-                if (currentPreferences.pauseWhenScreenOff && !isScreenOn) {
-                    stopMonitoring()
-                } else {
+                if (shouldPoll(currentPreferences.pauseWhenScreenOff, isScreenOn)) {
                     startMonitoring()
+                } else {
+                    stopMonitoring()
                 }
             }
         }
@@ -130,12 +144,11 @@ class NetPulseService : Service() {
     }
 
     private fun onScreenStateChanged(screenOn: Boolean) {
-        isScreenOn = screenOn
-        if (!screenOn && currentPreferences.pauseWhenScreenOff) {
+        if (shouldPoll(currentPreferences.pauseWhenScreenOff, screenOn)) {
+            if (currentPreferences.isServiceEnabled) startMonitoring()
+        } else {
             pollingJob?.cancel()
             pollingJob = null
-        } else if (screenOn && pollingJob == null && currentPreferences.isServiceEnabled) {
-            startMonitoring()
         }
     }
 

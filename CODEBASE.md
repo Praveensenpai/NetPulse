@@ -114,10 +114,11 @@ Kernel (/proc/net/dev) ──> TrafficDataSource ──> NetPulseService
 - **Consumers**: `LocalDataStore`.
 - **Note**: Uses `Instant.atZone(...).toLocalDate()` rather than `LocalDate.ofInstant`, which is API 34 and would break the API 33 floor. `keysToPrune` never returns a key it cannot parse as a usage bucket, and keeps future-dated keys so a backwards clock skew cannot delete data.
 
-### `com.netpulse.app.service.NetPulseService` (Role: service, Lines: 246)
-- **Responsibility**: Foreground service managing low-overhead 1Hz polling loop with screen-off pause.
+### `com.netpulse.app.service.NetPulseService` (Role: service, Lines: 217)
+- **Responsibility**: Foreground service managing low-overhead 1Hz polling loop with screen-off pause. Display state is read from `PowerManager.isInteractive` on every decision, never cached.
 - **Public Lifecycle**: `onCreate()`, `onStartCommand()`, `onDestroy()`.
 - **Side Effects**: System notification updates, window overlay layout mutations, DataStore writes.
+- **Note**: The start decision goes through `shouldPoll(...)` in `PollingPolicy.kt`. `ScreenStateReceiver` only reports future transitions, so a cached flag would stay `true` across any start that happens with the display already dark (boot, package replace, sticky restart).
 
 ### `com.netpulse.app.service.ScreenStateReceiver` (Role: service, Lines: 40)
 - **Responsibility**: Pauses/resumes polling loop upon display power state changes.
