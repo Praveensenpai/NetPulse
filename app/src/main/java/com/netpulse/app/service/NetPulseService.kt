@@ -30,6 +30,9 @@ class NetPulseService : Service() {
     private var currentPreferences = MeterPreferences()
     private var todayUsage = DailyUsage(dateKey = "")
 
+    /** Last [MeterPreferences.pauseWhenScreenOff] the loop was reconciled for. */
+    private var lastPauseWhenScreenOff: Boolean? = null
+
     private lateinit var notificationManager: SpeedNotificationManager
     private lateinit var overlayManager: FloatingOverlayManager
     private lateinit var screenReceiver: ScreenStateReceiver
@@ -127,6 +130,18 @@ class NetPulseService : Service() {
                 // permission was granted, in which case no state transition fires.
                 overlayManager.syncVisibility(prefs.showFloatingOverlay, prefs.overlayAlpha)
 
+                // onStartCommand decides whether to poll before this flow has
+                // emitted, so it can only read the in-memory default
+                // (pauseWhenScreenOff = true). A start that happens while the
+                // display is already dark would therefore stay paused even when
+                // the stored preference says not to pause, and nothing would
+                // revisit that decision until the screen cycled. Reconcile as
+                // soon as the real value is known.
+                if (lastPauseWhenScreenOff != prefs.pauseWhenScreenOff) {
+                    lastPauseWhenScreenOff = prefs.pauseWhenScreenOff
+                    reconcilePolling()
+                }
+
                 // Turning the live readout off must replace the stale speed text,
                 // otherwise the shade keeps showing a frozen value.
                 if (prevPrefs.showNotification != prefs.showNotification) {
@@ -142,9 +157,22 @@ class NetPulseService : Service() {
         }
     }
 
-    private fun onScreenStateChanged(screenOn: Boolean) {
+    private fun onScreenStateChanged(screenOn: Boolean) = applyPolling(screenOn)
+
+    /**
+     * Aligns the polling loop with the current preference and display state.
+     *
+     * Safe to call repeatedly: [startMonitoring] returns early when the job is
+     * already running, and cancelling an idle job is a no-op. Reads the display
+     * state live because this runs when preferences arrive, and no broadcast
+     * will ever report the state the screen is already in.
+     */
+    private fun reconcilePolling() = applyPolling(isScreenOn)
+
+    private fun applyPolling(screenOn: Boolean) {
+        if (!currentPreferences.isServiceEnabled) return
         if (shouldPoll(currentPreferences.pauseWhenScreenOff, screenOn)) {
-            if (currentPreferences.isServiceEnabled) startMonitoring()
+            startMonitoring()
         } else {
             pollingJob?.cancel()
             pollingJob = null
