@@ -16,6 +16,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.BatteryChargingFull
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.SettingsApplications
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material3.Button
@@ -34,6 +35,8 @@ import com.netpulse.app.ui.theme.Dimens
 
 @Composable
 fun BatteryGuideScreen(
+    isBatteryExempt: Boolean,
+    isSamsungDevice: Boolean,
     onOpenBatterySettings: () -> Unit,
     onOpenDeviceCare: () -> Unit,
     modifier: Modifier = Modifier
@@ -76,6 +79,8 @@ fun BatteryGuideScreen(
 
         item(key = "actions") {
             GuideActionButtons(
+                isBatteryExempt = isBatteryExempt,
+                isSamsungDevice = isSamsungDevice,
                 onOpenBatterySettings = onOpenBatterySettings,
                 onOpenDeviceCare = onOpenDeviceCare
             )
@@ -149,6 +154,8 @@ private fun GuideStepCard(
 
 @Composable
 private fun GuideActionButtons(
+    isBatteryExempt: Boolean,
+    isSamsungDevice: Boolean,
     onOpenBatterySettings: () -> Unit,
     onOpenDeviceCare: () -> Unit,
     modifier: Modifier = Modifier
@@ -157,18 +164,32 @@ private fun GuideActionButtons(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(Dimens.sm)
     ) {
+        // Launching the exemption intent while the app is already exempt opens a
+        // settings screen that finishes instantly, so the button would flash and
+        // return with no visible effect. Show the granted state instead.
         Button(
             onClick = onOpenBatterySettings,
+            enabled = !isBatteryExempt,
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(Dimens.cornerMd)
         ) {
             Icon(
-                imageVector = Icons.Rounded.BatteryChargingFull,
+                imageVector = if (isBatteryExempt) {
+                    Icons.Rounded.Check
+                } else {
+                    Icons.Rounded.BatteryChargingFull
+                },
                 contentDescription = null,
                 modifier = Modifier.size(Dimens.iconSizeSm)
             )
             Spacer(modifier = Modifier.width(Dimens.sm))
-            Text(text = "Open Battery Exemption Settings")
+            Text(
+                text = if (isBatteryExempt) {
+                    "Battery Exemption Granted"
+                } else {
+                    "Open Battery Exemption Settings"
+                }
+            )
         }
         OutlinedButton(
             onClick = onOpenDeviceCare,
@@ -176,12 +197,22 @@ private fun GuideActionButtons(
             shape = RoundedCornerShape(Dimens.cornerMd)
         ) {
             Icon(
-                imageVector = Icons.Rounded.SettingsApplications,
+                imageVector = if (isSamsungDevice) {
+                    Icons.Rounded.SettingsApplications
+                } else {
+                    Icons.Rounded.Info
+                },
                 contentDescription = null,
                 modifier = Modifier.size(Dimens.iconSizeSm)
             )
             Spacer(modifier = Modifier.width(Dimens.sm))
-            Text(text = "Open Samsung Device Care")
+            Text(
+                text = if (isSamsungDevice) {
+                    "Open Samsung Device Care"
+                } else {
+                    "Open App Info"
+                }
+            )
         }
     }
 }
