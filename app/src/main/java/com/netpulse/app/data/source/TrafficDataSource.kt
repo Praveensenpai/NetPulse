@@ -12,6 +12,14 @@ data class TrafficDelta(val rxBytes: Long, val txBytes: Long) {
 class TrafficDataSource(
     private val trafficStatsProvider: TrafficStatsProvider = SystemTrafficStatsProvider
 ) {
+    // Mutated from two threads: sample/peek/consume run on the polling loop's
+    // Dispatchers.Default scope, while reset and catchUp come from the service
+    // callbacks on the main thread. Cancellation is cooperative, so a tick that
+    // is already running keeps going after stopMonitoring() nulls the job and
+    // can overlap the next catchUp(). The fields below are a read-modify-write
+    // set, so without exclusion two callers can count the same bytes twice or
+    // drop an increment entirely. Every public method is @Synchronized; the
+    // call rate is 1 Hz, so the monitor is uncontended in practice.
     private var lastRxBytes = -1L
     private var lastTxBytes = -1L
     private var lastTimestampMs = 0L
@@ -19,6 +27,7 @@ class TrafficDataSource(
     private var pendingRxDelta = 0L
     private var pendingTxDelta = 0L
 
+    @Synchronized
     fun reset() {
         lastRxBytes = -1L
         lastTxBytes = -1L
@@ -38,6 +47,7 @@ class TrafficDataSource(
      * Safe to call before the first sample and across counter resets; both are
      * no-ops rather than negative deltas.
      */
+    @Synchronized
     fun catchUp() {
         if (lastRxBytes < 0 || lastTxBytes < 0) return
         val currentRx = trafficStatsProvider.getTotalRxBytes()
@@ -52,6 +62,7 @@ class TrafficDataSource(
         lastTimestampMs = trafficStatsProvider.getElapsedRealtimeMs()
     }
 
+    @Synchronized
     fun sample(): SpeedSnapshot {
         val currentRx = trafficStatsProvider.getTotalRxBytes()
         val currentTx = trafficStatsProvider.getTotalTxBytes()
@@ -99,6 +110,7 @@ class TrafficDataSource(
      * commits to clearing them. Reading and clearing in one step forced the caller
      * to drop bytes whenever the active transport was unknown.
      */
+    @Synchronized
     fun peekDelta(): TrafficDelta = TrafficDelta(pendingRxDelta, pendingTxDelta)
 
     /**
@@ -106,6 +118,7 @@ class TrafficDataSource(
      * Usage accounting must use this instead of the per-second rate, otherwise gaps
      * (screen-off, slow ticks) silently under- or over-report consumption.
      */
+    @Synchronized
     fun consumeDelta(): TrafficDelta {
         val delta = peekDelta()
         pendingRxDelta = 0L

@@ -3,6 +3,10 @@ package com.netpulse.app.data
 import com.google.common.truth.Truth.assertThat
 import com.netpulse.app.data.source.TrafficDataSource
 import com.netpulse.app.data.source.TrafficStatsProvider
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 import org.junit.Test
 
 class FakeTrafficStatsProvider(
@@ -189,5 +193,53 @@ class TrafficDataSourceTest {
         dataSource.catchUp()
 
         assertThat(dataSource.peekDelta().totalBytes).isEqualTo(0L)
+    }
+
+    /**
+     * The polling loop samples on `Dispatchers.Default` while `reset()` and
+     * `catchUp()` arrive on the main thread, so the fields are touched by two
+     * threads. Without exclusion, concurrent increments to the pending deltas
+     * (plain `Long` reads and writes) lose updates: the ledger silently
+     * under-reports traffic. Every byte the provider reports must land in the
+     * pending delta exactly once.
+     */
+    @Test
+    fun concurrentSampling_neverLosesAccumulatedBytes() {
+        val threads = 8
+        val roundsPerThread = 2_000
+        val bytesPerRound = 16L
+        val fake = FakeTrafficStatsProvider(rx = 0L, tx = 0L, timeMs = 1000L)
+        val dataSource = TrafficDataSource(fake)
+        dataSource.sample()
+
+        // Each round advances the counters by a fixed amount, so the total that
+        // must be accounted for is known up front regardless of interleaving.
+        val rx = AtomicLong(0L)
+        val start = CountDownLatch(1)
+        val done = CountDownLatch(threads)
+        val pool = Executors.newFixedThreadPool(threads)
+
+        repeat(threads) {
+            pool.execute {
+                start.await()
+                try {
+                    repeat(roundsPerThread) {
+                        synchronized(rx) {
+                            fake.rx = rx.addAndGet(bytesPerRound)
+                        }
+                        dataSource.sample()
+                    }
+                } finally {
+                    done.countDown()
+                }
+            }
+        }
+
+        start.countDown()
+        assertThat(done.await(30, TimeUnit.SECONDS)).isTrue()
+        pool.shutdown()
+
+        val expected = rx.get()
+        assertThat(dataSource.consumeDelta().rxBytes).isEqualTo(expected)
     }
 }
