@@ -54,7 +54,7 @@ class SpeedNotificationManager(private val context: Context) {
             .setContentText(content)
 
         if (useDynamicIcon) {
-            builder.setSmallIcon(dynamicIcon(speed, unitInBits))
+            builder.setSmallIcon(dynamicIcon(speed, unitInBits, showUpload))
         } else {
             builder.setSmallIcon(R.drawable.ic_stat_speed)
         }
@@ -82,8 +82,17 @@ class SpeedNotificationManager(private val context: Context) {
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
 
-    private fun dynamicIcon(speed: SpeedSnapshot, unitInBits: Boolean): IconCompat {
-        val totalSpeed = SpeedFormatter.formatSpeed(speed.totalBytesPerSec, unitInBits)
+    private fun dynamicIcon(
+        speed: SpeedSnapshot,
+        unitInBits: Boolean,
+        showUpload: Boolean
+    ): IconCompat {
+        // Must follow the same rule as the title, or the icon and the text
+        // disagree whenever one direction carries all the traffic.
+        val totalSpeed = SpeedFormatter.formatSpeed(
+            speed.displayBytesPerSec(includeUpload = showUpload),
+            unitInBits
+        )
         return IconCompat.createWithBitmap(SpeedIconGenerator.generateSpeedBitmap(totalSpeed))
     }
 
