@@ -52,19 +52,6 @@ internal object DayKeys {
         localDateOf(nowMs, zone).format(FORMATTER)
 
     /**
-     * Epoch millis of the first instant of the next local day after [nowMs].
-     *
-     * Uses the zone's own rules, so a DST transition or a month/year boundary
-     * lands on the real start of the day rather than a fixed 24-hour offset.
-     */
-    fun nextMidnightMs(nowMs: Long, zone: ZoneId): Long =
-        localDateOf(nowMs, zone)
-            .plusDays(1)
-            .atStartOfDay(zone)
-            .toInstant()
-            .toEpochMilli()
-
-    /**
      * Emits the current day key immediately, then again whenever the key
      * changes. Duplicate keys are dropped so downstream collection is not
      * restarted on every tick.

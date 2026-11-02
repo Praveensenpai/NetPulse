@@ -48,25 +48,22 @@ class LocalDataStore(private val context: Context) {
     }
 
     val meterPreferencesFlow: Flow<MeterPreferences> = context.preferencesDataStore.data.map { prefs ->
-        MeterPreferences(
-            isServiceEnabled = prefs[PrefKeys.SERVICE_ENABLED] ?: true,
-            showNotification = prefs[PrefKeys.SHOW_NOTIFICATION] ?: true,
-            showStatusBarIcon = prefs[PrefKeys.SHOW_STATUS_BAR_ICON] ?: true,
-            showUploadSpeed = prefs[PrefKeys.SHOW_UPLOAD_SPEED] ?: true,
-            showFloatingOverlay = prefs[PrefKeys.SHOW_FLOATING_OVERLAY] ?: false,
-            unitInBits = prefs[PrefKeys.UNIT_IN_BITS] ?: false,
-            startOnBoot = prefs[PrefKeys.START_ON_BOOT] ?: true,
-            pauseWhenScreenOff = prefs[PrefKeys.PAUSE_WHEN_SCREEN_OFF] ?: true,
-            overlayAlpha = prefs[PrefKeys.OVERLAY_ALPHA] ?: 0.85f
-        )
+        meterPreferencesOf(prefs)
     }
 
     suspend fun getMeterPreferences(): MeterPreferences = meterPreferencesFlow.first()
 
+    /**
+     * Applies [transform] to the stored preferences inside one transaction.
+     *
+     * Reading the current value first and writing it back afterwards would let
+     * two concurrent setters both start from the same snapshot, so the second
+     * write would silently drop the first one's change. Building the snapshot
+     * inside [edit] keeps the read and the write atomic.
+     */
     suspend fun updateMeterPreferences(transform: (MeterPreferences) -> MeterPreferences) {
-        val current = getMeterPreferences()
-        val updated = transform(current)
         context.preferencesDataStore.edit { prefs ->
+            val updated = transform(meterPreferencesOf(prefs))
             prefs[PrefKeys.SERVICE_ENABLED] = updated.isServiceEnabled
             prefs[PrefKeys.SHOW_NOTIFICATION] = updated.showNotification
             prefs[PrefKeys.SHOW_STATUS_BAR_ICON] = updated.showStatusBarIcon
@@ -78,6 +75,18 @@ class LocalDataStore(private val context: Context) {
             prefs[PrefKeys.OVERLAY_ALPHA] = updated.overlayAlpha
         }
     }
+
+    private fun meterPreferencesOf(prefs: Preferences): MeterPreferences = MeterPreferences(
+        isServiceEnabled = prefs[PrefKeys.SERVICE_ENABLED] ?: true,
+        showNotification = prefs[PrefKeys.SHOW_NOTIFICATION] ?: true,
+        showStatusBarIcon = prefs[PrefKeys.SHOW_STATUS_BAR_ICON] ?: true,
+        showUploadSpeed = prefs[PrefKeys.SHOW_UPLOAD_SPEED] ?: true,
+        showFloatingOverlay = prefs[PrefKeys.SHOW_FLOATING_OVERLAY] ?: false,
+        unitInBits = prefs[PrefKeys.UNIT_IN_BITS] ?: false,
+        startOnBoot = prefs[PrefKeys.START_ON_BOOT] ?: true,
+        pauseWhenScreenOff = prefs[PrefKeys.PAUSE_WHEN_SCREEN_OFF] ?: true,
+        overlayAlpha = prefs[PrefKeys.OVERLAY_ALPHA] ?: 0.85f
+    )
 
     fun getTodayKey(): String = DayKeys.keyFor(System.currentTimeMillis(), ZoneId.systemDefault())
 

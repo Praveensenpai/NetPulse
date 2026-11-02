@@ -42,20 +42,6 @@ class DayKeysTest {
     }
 
     @Test
-    fun `nextMidnightMs points at the first instant of the next day`() {
-        val now = millisOf(2026, 11, 1, 23, 55)
-        val expected = millisOf(2026, 11, 2, 0, 0)
-        assertThat(DayKeys.nextMidnightMs(now, zone)).isEqualTo(expected)
-    }
-
-    @Test
-    fun `nextMidnightMs is correct mid-day`() {
-        val now = millisOf(2026, 11, 1, 12, 0)
-        assertThat(DayKeys.nextMidnightMs(now, zone))
-            .isEqualTo(millisOf(2026, 11, 2, 0, 0))
-    }
-
-    @Test
     fun `ticker emits the current key first`() = runTest {
         val fixed = millisOf(2026, 11, 1, 12, 0)
         val seen = withTimeout(1_000) {
