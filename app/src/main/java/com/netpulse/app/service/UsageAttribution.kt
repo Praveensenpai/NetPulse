@@ -37,13 +37,12 @@ internal sealed interface UsageAttribution {
  */
 internal fun attributeUsage(
     type: ActiveNetworkType,
-    deltaBytes: Long,
-    heldBytes: Long = 0L
+    deltaBytes: Long
 ): UsageAttribution = when {
     deltaBytes <= 0L -> UsageAttribution.Drop
     type == ActiveNetworkType.WIFI -> UsageAttribution.Record(0L, deltaBytes)
     type == ActiveNetworkType.MOBILE -> UsageAttribution.Record(deltaBytes, 0L)
-    type == ActiveNetworkType.NONE && heldBytes + deltaBytes <= MAX_HELD_USAGE_BYTES ->
+    type == ActiveNetworkType.NONE && deltaBytes <= MAX_HELD_USAGE_BYTES ->
         UsageAttribution.Hold
     else -> UsageAttribution.Drop
 }

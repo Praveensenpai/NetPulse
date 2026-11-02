@@ -42,18 +42,13 @@ class UsageAttributionTest {
 
     @Test
     fun `held bytes stop accumulating at the ceiling`() {
-        val atLimit = attributeUsage(
-            ActiveNetworkType.NONE,
-            deltaBytes = 1024L,
-            heldBytes = MAX_HELD_USAGE_BYTES - 1024L
-        )
+        // The pending delta is the accumulator: a Hold leaves the bytes in
+        // place, so the next tick re-peeks the grown total. These are the exact
+        // values the polling loop reaches after a long no-transport stretch.
+        val atLimit = attributeUsage(ActiveNetworkType.NONE, MAX_HELD_USAGE_BYTES)
         assertThat(atLimit).isEqualTo(UsageAttribution.Hold)
 
-        val overLimit = attributeUsage(
-            ActiveNetworkType.NONE,
-            deltaBytes = 1024L,
-            heldBytes = MAX_HELD_USAGE_BYTES
-        )
+        val overLimit = attributeUsage(ActiveNetworkType.NONE, MAX_HELD_USAGE_BYTES + 1L)
         assertThat(overLimit).isEqualTo(UsageAttribution.Drop)
     }
 }
