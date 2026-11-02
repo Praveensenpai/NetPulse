@@ -68,14 +68,21 @@ internal object DayKeys {
      * Emits the current day key immediately, then again whenever the key
      * changes. Duplicate keys are dropped so downstream collection is not
      * restarted on every tick.
+     *
+     * The zone arrives as a provider rather than a value because a captured
+     * zone goes stale the moment the user travels or changes the device time
+     * zone: the write path re-reads `systemDefault()` on every tick, so a
+     * pinned reader keeps observing the old day while new usage lands in the
+     * new one. Taking a provider makes both sides resolve "today" from the
+     * same live source, so they cannot disagree.
      */
     fun dayKeyTicker(
         clock: () -> Long,
-        zone: ZoneId,
+        zoneProvider: () -> ZoneId,
         recheckMs: Long = RECHECK_MS
     ): Flow<String> = flow {
         while (true) {
-            emit(keyFor(clock(), zone))
+            emit(keyFor(clock(), zoneProvider()))
             delay(recheckMs)
         }
     }.distinctUntilChanged()

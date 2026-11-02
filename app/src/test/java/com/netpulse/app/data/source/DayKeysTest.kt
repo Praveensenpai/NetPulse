@@ -59,7 +59,7 @@ class DayKeysTest {
     fun `ticker emits the current key first`() = runTest {
         val fixed = millisOf(2026, 11, 1, 12, 0)
         val seen = withTimeout(1_000) {
-            DayKeys.dayKeyTicker(clock = { fixed }, zone = zone, recheckMs = 10_000)
+            DayKeys.dayKeyTicker(clock = { fixed }, zoneProvider = { zone }, recheckMs = 10_000)
                 .take(1)
                 .toList()
         }
@@ -77,7 +77,33 @@ class DayKeysTest {
         val clock = { if (reads.getAndIncrement() == 0) before else after }
 
         val seen = withTimeout(5_000) {
-            DayKeys.dayKeyTicker(clock = clock, zone = zone, recheckMs = 1)
+            DayKeys.dayKeyTicker(clock = clock, zoneProvider = { zone }, recheckMs = 1)
+                .take(2)
+                .toList()
+        }
+
+        assertThat(seen).containsExactly("2026-11-01", "2026-11-02").inOrder()
+    }
+
+    @Test
+    fun `ticker follows a zone change without a restart`() = runTest {
+        // One instant that falls on different calendar days in the two zones,
+        // so only the zone can explain a new key: 2026-11-01 19:26 PST is
+        // 2026-11-02 08:56 IST.
+        val fixed = ZonedDateTime.of(2026, 11, 1, 19, 26, 0, 0, ZoneId.of("America/Los_Angeles"))
+            .toInstant()
+            .toEpochMilli()
+
+        // The first tick resolves the zone before the device travels, every
+        // later tick resolves the zone it has moved to.
+        val reads = java.util.concurrent.atomic.AtomicInteger(0)
+        val zoneProvider = {
+            if (reads.getAndIncrement() == 0) ZoneId.of("America/Los_Angeles")
+            else ZoneId.of("Asia/Kolkata")
+        }
+
+        val seen = withTimeout(5_000) {
+            DayKeys.dayKeyTicker(clock = { fixed }, zoneProvider = zoneProvider, recheckMs = 1)
                 .take(2)
                 .toList()
         }
@@ -91,7 +117,7 @@ class DayKeysTest {
         val seen = mutableListOf<String>()
 
         val job = launch {
-            DayKeys.dayKeyTicker(clock = { fixed }, zone = zone, recheckMs = 1)
+            DayKeys.dayKeyTicker(clock = { fixed }, zoneProvider = { zone }, recheckMs = 1)
                 .collect { seen += it }
         }
         withTimeout(2_000) { while (seen.isEmpty()) kotlinx.coroutines.delay(1) }

@@ -93,7 +93,7 @@ class LocalDataStore(private val context: Context) {
     fun observeDailyUsage(): Flow<DailyUsage> =
         DayKeys.dayKeyTicker(
             clock = System::currentTimeMillis,
-            zone = ZoneId.systemDefault()
+            zoneProvider = ZoneId::systemDefault
         ).flatMapLatest { dateKey -> usageFor(dateKey) }
 
     private fun usageFor(dateKey: String): Flow<DailyUsage> {
@@ -118,7 +118,7 @@ class LocalDataStore(private val context: Context) {
     fun observeUsageHistory(): Flow<UsageHistory> =
         DayKeys.dayKeyTicker(
             clock = System::currentTimeMillis,
-            zone = ZoneId.systemDefault()
+            zoneProvider = ZoneId::systemDefault
         ).flatMapLatest { dateKey ->
             context.usageDataStore.data.map { prefs ->
                 UsageAggregator.aggregate(
