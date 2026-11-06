@@ -14,7 +14,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.DataUsage
 import androidx.compose.material.icons.rounded.SignalCellularAlt
 import androidx.compose.material.icons.rounded.Wifi
-import androidx.compose.material.icons.rounded.WifiTethering
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
@@ -69,10 +68,17 @@ fun UsageSummaryCard(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(Dimens.md)
             ) {
+                val mobileTotal = range.mobileBytes + range.hotspotBytes
+                val hotspotInfo = if (range.hotspotBytes > 0L) {
+                    "Hotspot: ${SpeedFormatter.formatDataUsage(range.hotspotBytes)}"
+                } else {
+                    null
+                }
                 UsageItem(
                     label = "Mobile Data",
-                    usage = SpeedFormatter.formatDataUsage(range.mobileBytes),
+                    usage = SpeedFormatter.formatDataUsage(mobileTotal),
                     icon = Icons.Rounded.SignalCellularAlt,
+                    extraInfo = hotspotInfo,
                     modifier = Modifier.weight(1f)
                 )
                 UsageItem(
@@ -81,14 +87,6 @@ fun UsageSummaryCard(
                     icon = Icons.Rounded.Wifi,
                     modifier = Modifier.weight(1f)
                 )
-                if (range.hotspotBytes > 0L) {
-                    UsageItem(
-                        label = "Hotspot",
-                        usage = SpeedFormatter.formatDataUsage(range.hotspotBytes),
-                        icon = Icons.Rounded.WifiTethering,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
             }
             Spacer(modifier = Modifier.height(Dimens.sm))
             Text(
@@ -138,6 +136,7 @@ private fun UsageItem(
     label: String,
     usage: String,
     icon: ImageVector,
+    extraInfo: String? = null,
     modifier: Modifier = Modifier
 ) {
     Column(modifier = modifier) {
@@ -161,5 +160,12 @@ private fun UsageItem(
             style = MaterialTheme.typography.titleLarge,
             color = MaterialTheme.colorScheme.onSurface
         )
+        if (extraInfo != null) {
+            Text(
+                text = extraInfo,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
     }
 }
