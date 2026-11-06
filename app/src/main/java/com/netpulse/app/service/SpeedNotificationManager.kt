@@ -45,12 +45,11 @@ class SpeedNotificationManager(private val context: Context) {
             "Speed: ${dl.displayString}"
         }
 
-        val mobileTotal = usage.mobileBytes + usage.hotspotBytes
-        val mobileStr = SpeedFormatter.formatDataUsage(mobileTotal)
+        val mobileStr = SpeedFormatter.formatDataUsage(usage.mobileBytes)
         val wifiStr = SpeedFormatter.formatDataUsage(usage.wifiBytes)
         val content = if (usage.hotspotBytes > 0L) {
             val hotspotStr = SpeedFormatter.formatDataUsage(usage.hotspotBytes)
-            "\u21C5 $mobileStr (\u25CE $hotspotStr)   \u1BE4 $wifiStr"
+            "\u21C5 $mobileStr   \u25CE\u21C5 $hotspotStr   \u1BE4 $wifiStr"
         } else {
             "\u21C5 $mobileStr   \u1BE4 $wifiStr"
         }
