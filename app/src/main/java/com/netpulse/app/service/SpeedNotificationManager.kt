@@ -49,12 +49,13 @@ class SpeedNotificationManager(private val context: Context) {
         val wifiStr = SpeedFormatter.formatDataUsage(usage.wifiBytes)
         val content = if (usage.hotspotBytes > 0L) {
             val hotspotStr = SpeedFormatter.formatDataUsage(usage.hotspotBytes)
-            "Today: Mobile $mobileStr | Wi-Fi $wifiStr | Hotspot $hotspotStr"
+            "\u21C5 $mobileStr   \u1BE4 $wifiStr   \u25CE $hotspotStr"
         } else {
-            "Today: Mobile $mobileStr | Wi-Fi $wifiStr"
+            "\u21C5 $mobileStr   \u1BE4 $wifiStr"
         }
 
         val builder = baseBuilder()
+            .setSubText("Today")
             .setContentTitle(title)
             .setContentText(content)
 
