@@ -22,6 +22,10 @@ class UsageRepositoryImpl(
         )
     }
 
+    override suspend fun syncHotspotUsage(accurateHotspotBytes: Long) {
+        localDataStore.syncHotspotUsage(accurateHotspotBytes)
+    }
+
     override suspend fun resetTodayUsage() {
         localDataStore.resetUsage()
     }

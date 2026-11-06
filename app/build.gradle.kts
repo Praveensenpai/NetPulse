@@ -31,8 +31,8 @@ android {
         applicationId = "com.netpulse.app"
         minSdk = 33
         targetSdk = 35
-        versionCode = 31
-        versionName = "1.7.0"
+        versionCode = 32
+        versionName = "1.7.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

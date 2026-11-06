@@ -42,9 +42,16 @@ internal sealed interface UsageAttribution {
 internal fun attributeUsage(
     type: ActiveNetworkType,
     deltaBytes: Long,
-    hotspotBytes: Long = 0L
+    hotspotBytes: Long = 0L,
+    isTethering: Boolean = false,
+    isScreenOn: Boolean = true
 ): UsageAttribution = when {
     deltaBytes <= 0L && hotspotBytes <= 0L -> UsageAttribution.Drop
+    isTethering && !isScreenOn -> UsageAttribution.Record(
+        mobileBytes = 0L,
+        wifiBytes = 0L,
+        hotspotBytes = deltaBytes.coerceAtLeast(hotspotBytes)
+    )
     type == ActiveNetworkType.WIFI -> UsageAttribution.Record(
         mobileBytes = 0L,
         wifiBytes = (deltaBytes - hotspotBytes).coerceAtLeast(0L),

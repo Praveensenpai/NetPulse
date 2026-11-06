@@ -5,6 +5,7 @@ import com.netpulse.app.core.NetworkMonitor
 import com.netpulse.app.data.repository.PreferencesRepositoryImpl
 import com.netpulse.app.data.repository.UsageRepositoryImpl
 import com.netpulse.app.data.source.LocalDataStore
+import com.netpulse.app.data.source.TetheringStatsProvider
 import com.netpulse.app.data.source.TrafficDataSource
 import com.netpulse.app.domain.repository.PreferencesRepository
 import com.netpulse.app.domain.repository.UsageRepository
@@ -22,6 +23,8 @@ class NetPulseApp : Application() {
         private set
     lateinit var networkMonitor: NetworkMonitor
         private set
+    lateinit var tetheringStatsProvider: TetheringStatsProvider
+        private set
 
     override fun onCreate() {
         super.onCreate()
@@ -31,6 +34,7 @@ class NetPulseApp : Application() {
         preferencesRepository = PreferencesRepositoryImpl(localDataStore)
         usageRepository = UsageRepositoryImpl(localDataStore)
         networkMonitor = NetworkMonitor(this)
+        tetheringStatsProvider = TetheringStatsProvider(this)
         trafficDataSource = TrafficDataSource(
             tetheredInterfacesProvider = { networkMonitor.getActiveTetheredInterfaces() }
         )

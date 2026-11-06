@@ -77,4 +77,23 @@ class UsageAttributionTest {
         val overLimit = attributeUsage(ActiveNetworkType.NONE, MAX_HELD_USAGE_BYTES + 1L)
         assertThat(overLimit).isEqualTo(UsageAttribution.Drop)
     }
+
+    @Test
+    fun `tethering with screen off attributes all bytes to hotspot`() {
+        val result = attributeUsage(
+            type = ActiveNetworkType.MOBILE,
+            deltaBytes = 50_000_000L,
+            hotspotBytes = 100L,
+            isTethering = true,
+            isScreenOn = false
+        )
+
+        assertThat(result).isEqualTo(
+            UsageAttribution.Record(
+                mobileBytes = 0L,
+                wifiBytes = 0L,
+                hotspotBytes = 50_000_000L
+            )
+        )
+    }
 }

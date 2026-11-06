@@ -244,4 +244,26 @@ class LocalDataStore(private val context: Context) {
         }
     }
 
+    suspend fun syncHotspotUsage(
+        accurateHotspotBytes: Long,
+        dateKey: String = getTodayKey()
+    ) {
+        if (accurateHotspotBytes <= 0L) return
+        val mobileKey = longPreferencesKey("usage_${dateKey}_mobile")
+        val hotspotKey = longPreferencesKey("usage_${dateKey}_hotspot")
+        context.usageDataStore.edit { prefs ->
+            val curHotspot = prefs[hotspotKey] ?: 0L
+            if (accurateHotspotBytes <= curHotspot) return@edit
+            val diff = accurateHotspotBytes - curHotspot
+            val curMobile = prefs[mobileKey] ?: 0L
+            // Reconcile offloaded tethering bytes: transfer diff from mobile to hotspot
+            prefs[mobileKey] = (curMobile - diff).coerceAtLeast(0L)
+            prefs[hotspotKey] = accurateHotspotBytes
+
+            val curLifetimeHotspot = prefs[PrefKeys.LIFETIME_HOTSPOT] ?: 0L
+            val curLifetimeMobile = prefs[PrefKeys.LIFETIME_MOBILE] ?: 0L
+            prefs[PrefKeys.LIFETIME_HOTSPOT] = curLifetimeHotspot + diff
+            prefs[PrefKeys.LIFETIME_MOBILE] = (curLifetimeMobile - diff).coerceAtLeast(0L)
+        }
+    }
 }

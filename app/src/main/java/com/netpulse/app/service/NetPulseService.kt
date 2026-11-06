@@ -29,6 +29,7 @@ class NetPulseService : Service() {
     private var pollingJob: Job? = null
     private var currentPreferences = MeterPreferences()
     private var todayUsage = DailyUsage(dateKey = "")
+    private var lastTetherSyncMs = 0L
 
     /** Last [MeterPreferences.pauseWhenScreenOff] the loop was reconciled for. */
     private var lastPauseWhenScreenOff: Boolean? = null
@@ -209,6 +210,7 @@ class NetPulseService : Service() {
                 TelemetryManager.updateSpeed(snapshot)
 
                 recordConsumption(app)
+                syncTetheringStats(app)
                 pushNotification(snapshot)
 
                 if (currentPreferences.showFloatingOverlay) {
@@ -234,8 +236,16 @@ class NetPulseService : Service() {
         val delta = app.trafficDataSource.peekDelta()
         if (delta.totalBytes <= 0L && delta.hotspotBytes <= 0L) return
 
-        val type = app.networkMonitor.getCurrentConnection().type
-        when (val attribution = attributeUsage(type, delta.totalBytes, delta.hotspotBytes)) {
+        val conn = app.networkMonitor.getCurrentConnection()
+        when (
+            val attribution = attributeUsage(
+                type = conn.type,
+                deltaBytes = delta.totalBytes,
+                hotspotBytes = delta.hotspotBytes,
+                isTethering = conn.isTethering,
+                isScreenOn = isScreenOn
+            )
+        ) {
             is UsageAttribution.Record -> {
                 app.trafficDataSource.consumeDelta()
                 app.usageRepository.recordUsage(
@@ -246,6 +256,18 @@ class NetPulseService : Service() {
             }
             UsageAttribution.Hold -> Unit
             UsageAttribution.Drop -> app.trafficDataSource.consumeDelta()
+        }
+    }
+
+    private suspend fun syncTetheringStats(app: NetPulseApp) {
+        val nowMs = System.currentTimeMillis()
+        if (nowMs - lastTetherSyncMs < 3000L) return
+        lastTetherSyncMs = nowMs
+        if (app.networkMonitor.isTetheringActive()) {
+            val tetherBytes = app.tetheringStatsProvider.queryTodayTetheringBytes()
+            if (tetherBytes > 0L) {
+                app.usageRepository.syncHotspotUsage(tetherBytes)
+            }
         }
     }
 
