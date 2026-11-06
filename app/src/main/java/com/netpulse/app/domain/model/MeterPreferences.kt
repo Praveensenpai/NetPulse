@@ -9,5 +9,6 @@ data class MeterPreferences(
     val unitInBits: Boolean = false,
     val startOnBoot: Boolean = true,
     val pauseWhenScreenOff: Boolean = true,
+    val monitorWhenTethering: Boolean = true,
     val overlayAlpha: Float = 0.85f
 )

@@ -46,6 +46,10 @@ class PreferencesRepositoryImpl(
         updatePreferences { it.copy(pauseWhenScreenOff = pause) }
     }
 
+    override suspend fun setMonitorWhenTethering(monitor: Boolean) {
+        updatePreferences { it.copy(monitorWhenTethering = monitor) }
+    }
+
     override suspend fun setStartOnBoot(start: Boolean) {
         updatePreferences { it.copy(startOnBoot = start) }
     }

@@ -19,6 +19,7 @@ sealed interface SettingsEvent {
     data class ToggleUploadSpeed(val enabled: Boolean) : SettingsEvent
     data class ToggleUnitInBits(val inBits: Boolean) : SettingsEvent
     data class TogglePauseScreenOff(val pause: Boolean) : SettingsEvent
+    data class ToggleMonitorWhenTethering(val enabled: Boolean) : SettingsEvent
     data class ToggleStartOnBoot(val start: Boolean) : SettingsEvent
     data class ToggleFloatingOverlay(val enabled: Boolean) : SettingsEvent
     data object ResetTodayUsage : SettingsEvent
@@ -64,6 +65,8 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                     prefsRepo.setUnitInBits(event.inBits)
                 is SettingsEvent.TogglePauseScreenOff ->
                     prefsRepo.setPauseWhenScreenOff(event.pause)
+                is SettingsEvent.ToggleMonitorWhenTethering ->
+                    prefsRepo.setMonitorWhenTethering(event.enabled)
                 is SettingsEvent.ToggleStartOnBoot ->
                     prefsRepo.setStartOnBoot(event.start)
                 is SettingsEvent.ToggleFloatingOverlay ->

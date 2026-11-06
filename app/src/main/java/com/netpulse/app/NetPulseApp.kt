@@ -30,8 +30,10 @@ class NetPulseApp : Application() {
         localDataStore = LocalDataStore(this)
         preferencesRepository = PreferencesRepositoryImpl(localDataStore)
         usageRepository = UsageRepositoryImpl(localDataStore)
-        trafficDataSource = TrafficDataSource()
         networkMonitor = NetworkMonitor(this)
+        trafficDataSource = TrafficDataSource(
+            tetheredInterfacesProvider = { networkMonitor.getActiveTetheredInterfaces() }
+        )
 
         SpeedNotificationManager.createNotificationChannel(this)
     }

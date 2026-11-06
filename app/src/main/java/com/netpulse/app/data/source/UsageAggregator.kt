@@ -41,7 +41,7 @@ internal object UsageAggregator {
             // counting them would inflate every window.
             if (date.isAfter(today)) continue
 
-            val range = UsageRange(day.mobileBytes, day.wifiBytes)
+            val range = UsageRange(day.mobileBytes, day.wifiBytes, day.hotspotBytes)
             when (ChronoUnit.DAYS.between(date, today)) {
                 0L -> todayRange += range
                 in 1L until WEEK_DAYS.toLong() -> withinWeek += range
@@ -66,7 +66,7 @@ internal object UsageAggregator {
     /** Sum of every retained bucket. */
     fun seedLifetime(days: Collection<DailyUsage>): UsageRange =
         days.fold(UsageRange.ZERO) { acc, day ->
-            acc + UsageRange(day.mobileBytes, day.wifiBytes)
+            acc + UsageRange(day.mobileBytes, day.wifiBytes, day.hotspotBytes)
         }
 
     /**
@@ -79,6 +79,7 @@ internal object UsageAggregator {
      */
     fun reducedLifetime(lifetime: UsageRange, removed: UsageRange): UsageRange = UsageRange(
         mobileBytes = (lifetime.mobileBytes - removed.mobileBytes).coerceAtLeast(0L),
-        wifiBytes = (lifetime.wifiBytes - removed.wifiBytes).coerceAtLeast(0L)
+        wifiBytes = (lifetime.wifiBytes - removed.wifiBytes).coerceAtLeast(0L),
+        hotspotBytes = (lifetime.hotspotBytes - removed.hotspotBytes).coerceAtLeast(0L)
     )
 }

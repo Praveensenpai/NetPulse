@@ -32,6 +32,7 @@ class NetPulseService : Service() {
 
     /** Last [MeterPreferences.pauseWhenScreenOff] the loop was reconciled for. */
     private var lastPauseWhenScreenOff: Boolean? = null
+    private var lastMonitorWhenTethering: Boolean? = null
 
     private lateinit var notificationManager: SpeedNotificationManager
     private lateinit var overlayManager: FloatingOverlayManager
@@ -61,6 +62,12 @@ class NetPulseService : Service() {
             onScreenOn = { onScreenStateChanged(screenOn = true) }
         )
         screenReceiver.register(this)
+
+        serviceScope.launch {
+            app.networkMonitor.observeConnection().collect {
+                reconcilePolling()
+            }
+        }
 
         observeConfiguration(app)
     }
@@ -137,8 +144,10 @@ class NetPulseService : Service() {
                 // the stored preference says not to pause, and nothing would
                 // revisit that decision until the screen cycled. Reconcile as
                 // soon as the real value is known.
-                if (lastPauseWhenScreenOff != prefs.pauseWhenScreenOff) {
+                if (lastPauseWhenScreenOff != prefs.pauseWhenScreenOff ||
+                    lastMonitorWhenTethering != prefs.monitorWhenTethering) {
                     lastPauseWhenScreenOff = prefs.pauseWhenScreenOff
+                    lastMonitorWhenTethering = prefs.monitorWhenTethering
                     reconcilePolling()
                 }
 
@@ -171,7 +180,14 @@ class NetPulseService : Service() {
 
     private fun applyPolling(screenOn: Boolean) {
         if (!currentPreferences.isServiceEnabled) return
-        if (shouldPoll(currentPreferences.pauseWhenScreenOff, screenOn)) {
+        val isTethering = NetPulseApp.instance.networkMonitor.isTetheringActive()
+        if (shouldPoll(
+                pauseWhenScreenOff = currentPreferences.pauseWhenScreenOff,
+                screenOn = screenOn,
+                isTetheringActive = isTethering,
+                monitorWhenTethering = currentPreferences.monitorWhenTethering
+            )
+        ) {
             startMonitoring()
         } else {
             pollingJob?.cancel()
@@ -216,15 +232,16 @@ class NetPulseService : Service() {
      */
     private suspend fun recordConsumption(app: NetPulseApp) {
         val delta = app.trafficDataSource.peekDelta()
-        if (delta.totalBytes <= 0L) return
+        if (delta.totalBytes <= 0L && delta.hotspotBytes <= 0L) return
 
         val type = app.networkMonitor.getCurrentConnection().type
-        when (val attribution = attributeUsage(type, delta.totalBytes)) {
+        when (val attribution = attributeUsage(type, delta.totalBytes, delta.hotspotBytes)) {
             is UsageAttribution.Record -> {
                 app.trafficDataSource.consumeDelta()
                 app.usageRepository.recordUsage(
                     mobileDelta = attribution.mobileBytes,
-                    wifiDelta = attribution.wifiBytes
+                    wifiDelta = attribution.wifiBytes,
+                    hotspotDelta = attribution.hotspotBytes
                 )
             }
             UsageAttribution.Hold -> Unit

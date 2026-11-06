@@ -2,8 +2,9 @@
 name: karakuri
 description: >-
   Audits repositories against clean-code limits (<400 LOC/file, <60 LOC/fn, nesting <=3, 0 clippy warnings),
-  auto-generates/synchronizes schema-compliant CODEBASE.md living indexes, and syncs custom skills across
-  AI agent environments (~/.gemini, ~/.agents, ~/.claude, ~/.codex) using the native karakuri CLI.
+  auto-generates/synchronizes schema-compliant CODEBASE.md living indexes, detects the project stack to install
+  only matching language skills, and syncs custom skills across AI agent environments (~/.gemini, ~/.agents,
+  ~/.claude, ~/.codex) using the native karakuri CLI.
 ---
 
 # `karakuri` Skill: AI Codebase & Skill Repository Orchestrator
@@ -86,9 +87,66 @@ karakuri install --project --rules -y
 # Install rules and all modular skills into current project
 karakuri install --project --all -y
 
+# Stack-aware: install generic + only matching language skills (rust, python, mobile, shell)
+karakuri install --project --auto -y
+
+# Stack-aware with an explicit override
+karakuri install --project --skills --stack rust,python -y
+
 # Install globally across all agent home directories
 karakuri install --global --rules -y
 ```
+
+### 2.5 Stack-Aware Skill Ensure (`karakuri ensure`)
+
+This section is the **authoritative mapping** agents use to decide which skills a project needs. `karakuri ensure` applies it automatically; when the automatic result is wrong, the agent reasons from the table below and overrides it.
+
+`karakuri ensure` reconciles `<project>/.agents/skills` so only the matching skills are present. Idempotent: a second run writes nothing:
+
+```bash
+# Ensure the current project has exactly the skills its stack needs
+karakuri ensure .
+
+# Ensure an external project
+karakuri ensure /path/to/project
+```
+
+#### Detection Markers (shallow, root-level)
+
+| Stack | Triggered by |
+| :--- | :--- |
+| **Rust** | `Cargo.toml` or a top-level `*.rs` file |
+| **Python** | `pyproject.toml`, `requirements.txt`, `uv.lock`, `setup.py`, `Pipfile`, or a top-level `*.py` file |
+| **Mobile** | `build.gradle(.kts)`, `settings.gradle.kts`, `AndroidManifest.xml`, or a top-level `*.kt` file |
+| **Shell** | `Makefile`, `makefile`, or a top-level `*.sh` file |
+
+#### Stack → Skill Mapping
+
+| Stack | Skills installed |
+| :--- | :--- |
+| **Generic** (always) | `aesthetic-readme-craft`, `git-release-craft`, `git-repo-craft`, `codebase-digest`, `systematic-code-verification`, `karakuri`, `unslop` |
+| **Rust** | `rust-clean-code` |
+| **Python** | `python-clean-code`, `rust-style-python` |
+| **Mobile** | `compose-clean-code` |
+| **Shell** | `bash-clean-code` |
+| **Optional** (never auto-selected) | `tayori`, `kuroko`, `cli-builder`, `frontend-design`, `web-design-guidelines`, `tui-design` |
+
+Generic guardrails are always included. Python projects receive both `python-clean-code` and `rust-style-python`.
+
+#### Agent Validation Loop
+
+Do not install blindly. On project entry:
+
+1. Scan the root for the markers above and predict the expected skill set from the mapping table.
+2. Run `karakuri ensure .` and read the detected stacks and matched skills it prints.
+3. Compare the two. If the automatic detection is wrong (a marker is missing, stale, or the repo spans stacks the shallow scan missed), override it:
+
+   ```bash
+   karakuri install --project --skills --stack <list> -y
+   ```
+
+   where `<list>` is the corrected, comma-separated stacks (for example `--stack rust,python`). `--all` installs every skill; `--auto` is the explicit form of the default.
+4. Re-run `karakuri ensure .` after switching branches that change the stack.
 
 ---
 
@@ -109,3 +167,10 @@ At the end of any iteration touching source code:
 1. Run `karakuri digest .`.
 2. Verify that `CODEBASE.md` is updated with new modules and signatures.
 3. Commit `CODEBASE.md` alongside code changes in the same atomic commit.
+
+### Workflow C: Project Entry Bootstrap
+On first entering a repository, follow the **Agent Validation Loop** in §2.5:
+1. Scan root markers and predict the expected skill set from the Stack → Skill Mapping.
+2. Run `karakuri ensure .` and read the detected stacks and matched skills it prints.
+3. If the automatic detection is wrong, override it with `karakuri install --project --skills --stack <list> -y`.
+4. Re-run `karakuri ensure .` after switching branches that change the stack.

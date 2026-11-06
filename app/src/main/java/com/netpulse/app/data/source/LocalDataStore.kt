@@ -40,11 +40,13 @@ class LocalDataStore(private val context: Context) {
         val UNIT_IN_BITS = booleanPreferencesKey("unit_in_bits")
         val START_ON_BOOT = booleanPreferencesKey("start_on_boot")
         val PAUSE_WHEN_SCREEN_OFF = booleanPreferencesKey("pause_when_screen_off")
+        val MONITOR_WHEN_TETHERING = booleanPreferencesKey("monitor_when_tethering")
         val OVERLAY_ALPHA = floatPreferencesKey("overlay_alpha")
 
         /** Monotonic all-time totals; pruning never removes these. */
         val LIFETIME_MOBILE = longPreferencesKey("lifetime_mobile")
         val LIFETIME_WIFI = longPreferencesKey("lifetime_wifi")
+        val LIFETIME_HOTSPOT = longPreferencesKey("lifetime_hotspot")
     }
 
     val meterPreferencesFlow: Flow<MeterPreferences> = context.preferencesDataStore.data.map { prefs ->
@@ -72,6 +74,7 @@ class LocalDataStore(private val context: Context) {
             prefs[PrefKeys.UNIT_IN_BITS] = updated.unitInBits
             prefs[PrefKeys.START_ON_BOOT] = updated.startOnBoot
             prefs[PrefKeys.PAUSE_WHEN_SCREEN_OFF] = updated.pauseWhenScreenOff
+            prefs[PrefKeys.MONITOR_WHEN_TETHERING] = updated.monitorWhenTethering
             prefs[PrefKeys.OVERLAY_ALPHA] = updated.overlayAlpha
         }
     }
@@ -85,6 +88,7 @@ class LocalDataStore(private val context: Context) {
         unitInBits = prefs[PrefKeys.UNIT_IN_BITS] ?: false,
         startOnBoot = prefs[PrefKeys.START_ON_BOOT] ?: true,
         pauseWhenScreenOff = prefs[PrefKeys.PAUSE_WHEN_SCREEN_OFF] ?: true,
+        monitorWhenTethering = prefs[PrefKeys.MONITOR_WHEN_TETHERING] ?: true,
         overlayAlpha = prefs[PrefKeys.OVERLAY_ALPHA] ?: 0.85f
     )
 
@@ -108,11 +112,13 @@ class LocalDataStore(private val context: Context) {
     private fun usageFor(dateKey: String): Flow<DailyUsage> {
         val mobileKey = longPreferencesKey("usage_${dateKey}_mobile")
         val wifiKey = longPreferencesKey("usage_${dateKey}_wifi")
+        val hotspotKey = longPreferencesKey("usage_${dateKey}_hotspot")
         return context.usageDataStore.data.map { prefs ->
             DailyUsage(
                 dateKey = dateKey,
                 mobileBytes = prefs[mobileKey] ?: 0L,
-                wifiBytes = prefs[wifiKey] ?: 0L
+                wifiBytes = prefs[wifiKey] ?: 0L,
+                hotspotBytes = prefs[hotspotKey] ?: 0L
             )
         }
     }
@@ -149,28 +155,39 @@ class LocalDataStore(private val context: Context) {
                 DailyUsage(
                     dateKey = dateKey,
                     mobileBytes = prefs[longPreferencesKey("usage_${dateKey}_mobile")] ?: 0L,
-                    wifiBytes = prefs[longPreferencesKey("usage_${dateKey}_wifi")] ?: 0L
+                    wifiBytes = prefs[longPreferencesKey("usage_${dateKey}_wifi")] ?: 0L,
+                    hotspotBytes = prefs[longPreferencesKey("usage_${dateKey}_hotspot")] ?: 0L
                 )
             }
 
     private fun lifetimeOf(prefs: Preferences): UsageRange = UsageRange(
         mobileBytes = prefs[PrefKeys.LIFETIME_MOBILE] ?: 0L,
-        wifiBytes = prefs[PrefKeys.LIFETIME_WIFI] ?: 0L
+        wifiBytes = prefs[PrefKeys.LIFETIME_WIFI] ?: 0L,
+        hotspotBytes = prefs[PrefKeys.LIFETIME_HOTSPOT] ?: 0L
     )
 
-    suspend fun addUsage(dateKey: String = getTodayKey(), mobileDelta: Long, wifiDelta: Long) {
-        if (mobileDelta <= 0L && wifiDelta <= 0L) return
+    suspend fun addUsage(
+        dateKey: String = getTodayKey(),
+        mobileDelta: Long,
+        wifiDelta: Long,
+        hotspotDelta: Long = 0L
+    ) {
+        if (mobileDelta <= 0L && wifiDelta <= 0L && hotspotDelta <= 0L) return
         val mobileKey = longPreferencesKey("usage_${dateKey}_mobile")
         val wifiKey = longPreferencesKey("usage_${dateKey}_wifi")
+        val hotspotKey = longPreferencesKey("usage_${dateKey}_hotspot")
         context.usageDataStore.edit { prefs ->
             val curMobile = prefs[mobileKey] ?: 0L
             val curWifi = prefs[wifiKey] ?: 0L
+            val curHotspot = prefs[hotspotKey] ?: 0L
             prefs[mobileKey] = curMobile + mobileDelta
             prefs[wifiKey] = curWifi + wifiDelta
+            prefs[hotspotKey] = curHotspot + hotspotDelta
             // Lifetime counters are separate from the day buckets because
             // pruning deletes old days; all-time has to survive that.
             prefs[PrefKeys.LIFETIME_MOBILE] = (prefs[PrefKeys.LIFETIME_MOBILE] ?: 0L) + mobileDelta
             prefs[PrefKeys.LIFETIME_WIFI] = (prefs[PrefKeys.LIFETIME_WIFI] ?: 0L) + wifiDelta
+            prefs[PrefKeys.LIFETIME_HOTSPOT] = (prefs[PrefKeys.LIFETIME_HOTSPOT] ?: 0L) + hotspotDelta
         }
         pruneOldUsage(dateKey)
     }
@@ -210,16 +227,20 @@ class LocalDataStore(private val context: Context) {
     suspend fun resetUsage(dateKey: String = getTodayKey()) {
         val mobileKey = longPreferencesKey("usage_${dateKey}_mobile")
         val wifiKey = longPreferencesKey("usage_${dateKey}_wifi")
+        val hotspotKey = longPreferencesKey("usage_${dateKey}_hotspot")
         context.usageDataStore.edit { prefs ->
             val removed = UsageRange(
                 mobileBytes = prefs[mobileKey] ?: 0L,
-                wifiBytes = prefs[wifiKey] ?: 0L
+                wifiBytes = prefs[wifiKey] ?: 0L,
+                hotspotBytes = prefs[hotspotKey] ?: 0L
             )
             prefs[mobileKey] = 0L
             prefs[wifiKey] = 0L
+            prefs[hotspotKey] = 0L
             val reduced = UsageAggregator.reducedLifetime(lifetimeOf(prefs), removed)
             prefs[PrefKeys.LIFETIME_MOBILE] = reduced.mobileBytes
             prefs[PrefKeys.LIFETIME_WIFI] = reduced.wifiBytes
+            prefs[PrefKeys.LIFETIME_HOTSPOT] = reduced.hotspotBytes
         }
     }
 

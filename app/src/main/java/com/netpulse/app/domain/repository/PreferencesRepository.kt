@@ -14,5 +14,6 @@ interface PreferencesRepository {
     suspend fun setShowUploadSpeed(show: Boolean)
     suspend fun setShowStatusBarIcon(show: Boolean)
     suspend fun setPauseWhenScreenOff(pause: Boolean)
+    suspend fun setMonitorWhenTethering(monitor: Boolean)
     suspend fun setStartOnBoot(start: Boolean)
 }

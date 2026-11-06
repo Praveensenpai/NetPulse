@@ -5,12 +5,17 @@ import android.os.SystemClock
 import com.netpulse.app.domain.model.SpeedSnapshot
 
 /** Raw byte counts accumulated between two consecutive [sample] calls. */
-data class TrafficDelta(val rxBytes: Long, val txBytes: Long) {
+data class TrafficDelta(
+    val rxBytes: Long,
+    val txBytes: Long,
+    val hotspotBytes: Long = 0L
+) {
     val totalBytes: Long get() = rxBytes + txBytes
 }
 
 class TrafficDataSource(
-    private val trafficStatsProvider: TrafficStatsProvider = SystemTrafficStatsProvider
+    private val trafficStatsProvider: TrafficStatsProvider = SystemTrafficStatsProvider,
+    private val tetheredInterfacesProvider: () -> List<String> = { emptyList() }
 ) {
     // Mutated from two threads: sample/peek/consume run on the polling loop's
     // Dispatchers.Default scope, while reset and catchUp come from the service
@@ -26,6 +31,10 @@ class TrafficDataSource(
 
     private var pendingRxDelta = 0L
     private var pendingTxDelta = 0L
+    private var pendingHotspotDelta = 0L
+
+    private val lastIfaceRxMap = mutableMapOf<String, Long>()
+    private val lastIfaceTxMap = mutableMapOf<String, Long>()
 
     @Synchronized
     fun reset() {
@@ -34,6 +43,9 @@ class TrafficDataSource(
         lastTimestampMs = 0L
         pendingRxDelta = 0L
         pendingTxDelta = 0L
+        pendingHotspotDelta = 0L
+        lastIfaceRxMap.clear()
+        lastIfaceTxMap.clear()
     }
 
     /**
@@ -79,6 +91,8 @@ class TrafficDataSource(
             lastTimestampMs = currentTimeMs
             pendingRxDelta = 0L
             pendingTxDelta = 0L
+            pendingHotspotDelta = 0L
+            sampleTetheredInterfaces(currentTimeMs)
             return SpeedSnapshot(0L, 0L, currentTimeMs)
         }
 
@@ -92,14 +106,59 @@ class TrafficDataSource(
         lastTxBytes = currentTx
         lastTimestampMs = currentTimeMs
 
+        val tetherStats = sampleTetheredInterfaces(currentTimeMs)
+
         pendingRxDelta += rxDelta
         pendingTxDelta += txDelta
+        pendingHotspotDelta += tetherStats.totalDelta
+
+        // When tethering, downstream internet traffic forwarded to clients via softAP
+        // appears in totalTxBytes as upload. Deducting the forwarded client download
+        // preserves true uplink metrics instead of mirroring download as false upload.
+        val adjustedTxDelta = (txDelta - tetherStats.txDelta).coerceAtLeast(0L)
 
         return SpeedSnapshot(
             downloadBytesPerSec = (rxDelta / elapsedSec).toLong(),
-            uploadBytesPerSec = (txDelta / elapsedSec).toLong(),
+            uploadBytesPerSec = (adjustedTxDelta / elapsedSec).toLong(),
             timestamp = currentTimeMs
         )
+    }
+
+    private data class TetherDelta(val rxDelta: Long, val txDelta: Long) {
+        val totalDelta: Long get() = rxDelta + txDelta
+    }
+
+    private fun sampleTetheredInterfaces(nowMs: Long): TetherDelta {
+        val activeIfaces = tetheredInterfacesProvider()
+        if (activeIfaces.isEmpty()) {
+            lastIfaceRxMap.clear()
+            lastIfaceTxMap.clear()
+            return TetherDelta(0L, 0L)
+        }
+
+        var totalRxDelta = 0L
+        var totalTxDelta = 0L
+
+        for (iface in activeIfaces) {
+            val curRx = trafficStatsProvider.getInterfaceRxBytes(iface)
+            val curTx = trafficStatsProvider.getInterfaceTxBytes(iface)
+            if (curRx < 0L || curTx < 0L) continue
+
+            val prevRx = lastIfaceRxMap[iface]
+            val prevTx = lastIfaceTxMap[iface]
+
+            if (prevRx != null && curRx >= prevRx) {
+                totalRxDelta += curRx - prevRx
+            }
+            if (prevTx != null && curTx >= prevTx) {
+                totalTxDelta += curTx - prevTx
+            }
+
+            lastIfaceRxMap[iface] = curRx
+            lastIfaceTxMap[iface] = curTx
+        }
+
+        return TetherDelta(totalRxDelta, totalTxDelta)
     }
 
     /**
@@ -111,7 +170,7 @@ class TrafficDataSource(
      * to drop bytes whenever the active transport was unknown.
      */
     @Synchronized
-    fun peekDelta(): TrafficDelta = TrafficDelta(pendingRxDelta, pendingTxDelta)
+    fun peekDelta(): TrafficDelta = TrafficDelta(pendingRxDelta, pendingTxDelta, pendingHotspotDelta)
 
     /**
      * Returns the exact byte counts observed since the previous call and clears them.
@@ -123,6 +182,7 @@ class TrafficDataSource(
         val delta = peekDelta()
         pendingRxDelta = 0L
         pendingTxDelta = 0L
+        pendingHotspotDelta = 0L
         return delta
     }
 }
@@ -131,10 +191,14 @@ interface TrafficStatsProvider {
     fun getTotalRxBytes(): Long
     fun getTotalTxBytes(): Long
     fun getElapsedRealtimeMs(): Long
+    fun getInterfaceRxBytes(iface: String): Long = 0L
+    fun getInterfaceTxBytes(iface: String): Long = 0L
 }
 
 object SystemTrafficStatsProvider : TrafficStatsProvider {
     override fun getTotalRxBytes(): Long = TrafficStats.getTotalRxBytes()
     override fun getTotalTxBytes(): Long = TrafficStats.getTotalTxBytes()
     override fun getElapsedRealtimeMs(): Long = SystemClock.elapsedRealtime()
+    override fun getInterfaceRxBytes(iface: String): Long = TrafficStats.getRxBytes(iface)
+    override fun getInterfaceTxBytes(iface: String): Long = TrafficStats.getTxBytes(iface)
 }

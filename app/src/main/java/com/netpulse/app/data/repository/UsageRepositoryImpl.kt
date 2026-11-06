@@ -14,10 +14,11 @@ class UsageRepositoryImpl(
         return localDataStore.observeDailyUsage()
     }
 
-    override suspend fun recordUsage(mobileDelta: Long, wifiDelta: Long) {
+    override suspend fun recordUsage(mobileDelta: Long, wifiDelta: Long, hotspotDelta: Long) {
         localDataStore.addUsage(
             mobileDelta = mobileDelta,
-            wifiDelta = wifiDelta
+            wifiDelta = wifiDelta,
+            hotspotDelta = hotspotDelta
         )
     }
 

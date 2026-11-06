@@ -15,7 +15,11 @@ internal const val MAX_HELD_USAGE_BYTES = 64L * 1024 * 1024
 /** What the sampling loop should do with the bytes measured since the last tick. */
 internal sealed interface UsageAttribution {
     /** Account for these bytes against one bucket. */
-    data class Record(val mobileBytes: Long, val wifiBytes: Long) : UsageAttribution
+    data class Record(
+        val mobileBytes: Long,
+        val wifiBytes: Long,
+        val hotspotBytes: Long = 0L
+    ) : UsageAttribution
 
     /** Keep the bytes pending and re-evaluate on the next tick. */
     data object Hold : UsageAttribution
@@ -37,11 +41,20 @@ internal sealed interface UsageAttribution {
  */
 internal fun attributeUsage(
     type: ActiveNetworkType,
-    deltaBytes: Long
+    deltaBytes: Long,
+    hotspotBytes: Long = 0L
 ): UsageAttribution = when {
-    deltaBytes <= 0L -> UsageAttribution.Drop
-    type == ActiveNetworkType.WIFI -> UsageAttribution.Record(0L, deltaBytes)
-    type == ActiveNetworkType.MOBILE -> UsageAttribution.Record(deltaBytes, 0L)
+    deltaBytes <= 0L && hotspotBytes <= 0L -> UsageAttribution.Drop
+    type == ActiveNetworkType.WIFI -> UsageAttribution.Record(
+        mobileBytes = 0L,
+        wifiBytes = (deltaBytes - hotspotBytes).coerceAtLeast(0L),
+        hotspotBytes = hotspotBytes
+    )
+    type == ActiveNetworkType.MOBILE -> UsageAttribution.Record(
+        mobileBytes = (deltaBytes - hotspotBytes).coerceAtLeast(0L),
+        wifiBytes = 0L,
+        hotspotBytes = hotspotBytes
+    )
     type == ActiveNetworkType.NONE && deltaBytes <= MAX_HELD_USAGE_BYTES ->
         UsageAttribution.Hold
     else -> UsageAttribution.Drop

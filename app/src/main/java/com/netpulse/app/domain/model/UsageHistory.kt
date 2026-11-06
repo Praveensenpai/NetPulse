@@ -3,13 +3,15 @@ package com.netpulse.app.domain.model
 /** Mobile and Wi-Fi byte totals over some window. */
 data class UsageRange(
     val mobileBytes: Long = 0L,
-    val wifiBytes: Long = 0L
+    val wifiBytes: Long = 0L,
+    val hotspotBytes: Long = 0L
 ) {
-    val totalBytes: Long get() = mobileBytes + wifiBytes
+    val totalBytes: Long get() = mobileBytes + wifiBytes + hotspotBytes
 
     operator fun plus(other: UsageRange): UsageRange = UsageRange(
         mobileBytes = mobileBytes + other.mobileBytes,
-        wifiBytes = wifiBytes + other.wifiBytes
+        wifiBytes = wifiBytes + other.wifiBytes,
+        hotspotBytes = hotspotBytes + other.hotspotBytes
     )
 
     /**
@@ -21,7 +23,8 @@ data class UsageRange(
      */
     fun atLeast(other: UsageRange): UsageRange = UsageRange(
         mobileBytes = maxOf(mobileBytes, other.mobileBytes),
-        wifiBytes = maxOf(wifiBytes, other.wifiBytes)
+        wifiBytes = maxOf(wifiBytes, other.wifiBytes),
+        hotspotBytes = maxOf(hotspotBytes, other.hotspotBytes)
     )
 
     companion object {

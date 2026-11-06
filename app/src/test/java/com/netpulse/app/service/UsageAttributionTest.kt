@@ -21,6 +21,32 @@ class UsageAttributionTest {
     }
 
     @Test
+    fun `mobile bytes with hotspot attributes hotspot separately`() {
+        val result = attributeUsage(ActiveNetworkType.MOBILE, deltaBytes = 5000L, hotspotBytes = 3000L)
+
+        assertThat(result).isEqualTo(
+            UsageAttribution.Record(
+                mobileBytes = 2000L,
+                wifiBytes = 0L,
+                hotspotBytes = 3000L
+            )
+        )
+    }
+
+    @Test
+    fun `wifi bytes with hotspot attributes hotspot separately`() {
+        val result = attributeUsage(ActiveNetworkType.WIFI, deltaBytes = 6000L, hotspotBytes = 4000L)
+
+        assertThat(result).isEqualTo(
+            UsageAttribution.Record(
+                mobileBytes = 0L,
+                wifiBytes = 2000L,
+                hotspotBytes = 4000L
+            )
+        )
+    }
+
+    @Test
     fun `unknown transport holds bytes for the next tick`() {
         assertThat(attributeUsage(ActiveNetworkType.NONE, 1024L))
             .isEqualTo(UsageAttribution.Hold)

@@ -13,6 +13,7 @@ import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Power
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.SwapVert
+import androidx.compose.material.icons.rounded.WifiTethering
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -81,6 +82,16 @@ fun SettingsScreen(
                 checked = prefs.pauseWhenScreenOff,
                 onCheckedChange = { onEvent(SettingsEvent.TogglePauseScreenOff(it)) },
                 icon = Icons.Rounded.BatterySaver
+            )
+        }
+
+        item(key = "monitor_when_tethering") {
+            SettingToggleRow(
+                title = "Monitor During Hotspot",
+                description = "Keep measuring live speed even when screen is off if hotspot is active",
+                checked = prefs.monitorWhenTethering,
+                onCheckedChange = { onEvent(SettingsEvent.ToggleMonitorWhenTethering(it)) },
+                icon = Icons.Rounded.WifiTethering
             )
         }
 

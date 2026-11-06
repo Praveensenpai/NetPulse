@@ -16,4 +16,25 @@ class PollingPolicyTest {
         assertThat(shouldPoll(pauseWhenScreenOff = true, screenOn = true)).isTrue()
         assertThat(shouldPoll(pauseWhenScreenOff = true, screenOn = false)).isFalse()
     }
+
+    @Test
+    fun `keeps polling when screen is off if tethering is active and enabled`() {
+        assertThat(
+            shouldPoll(
+                pauseWhenScreenOff = true,
+                screenOn = false,
+                isTetheringActive = true,
+                monitorWhenTethering = true
+            )
+        ).isTrue()
+
+        assertThat(
+            shouldPoll(
+                pauseWhenScreenOff = true,
+                screenOn = false,
+                isTetheringActive = true,
+                monitorWhenTethering = false
+            )
+        ).isFalse()
+    }
 }

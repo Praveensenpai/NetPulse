@@ -14,6 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.DataUsage
 import androidx.compose.material.icons.rounded.SignalCellularAlt
 import androidx.compose.material.icons.rounded.Wifi
+import androidx.compose.material.icons.rounded.WifiTethering
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
@@ -80,6 +81,14 @@ fun UsageSummaryCard(
                     icon = Icons.Rounded.Wifi,
                     modifier = Modifier.weight(1f)
                 )
+                if (range.hotspotBytes > 0L) {
+                    UsageItem(
+                        label = "Hotspot",
+                        usage = SpeedFormatter.formatDataUsage(range.hotspotBytes),
+                        icon = Icons.Rounded.WifiTethering,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
             }
             Spacer(modifier = Modifier.height(Dimens.sm))
             Text(

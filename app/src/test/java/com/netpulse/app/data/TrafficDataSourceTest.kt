@@ -12,11 +12,15 @@ import org.junit.Test
 class FakeTrafficStatsProvider(
     var rx: Long = 0L,
     var tx: Long = 0L,
-    var timeMs: Long = 1000L
+    var timeMs: Long = 1000L,
+    var ifaceRx: Long = 0L,
+    var ifaceTx: Long = 0L
 ) : TrafficStatsProvider {
     override fun getTotalRxBytes(): Long = rx
     override fun getTotalTxBytes(): Long = tx
     override fun getElapsedRealtimeMs(): Long = timeMs
+    override fun getInterfaceRxBytes(iface: String): Long = ifaceRx
+    override fun getInterfaceTxBytes(iface: String): Long = ifaceTx
 }
 
 class TrafficDataSourceTest {
@@ -241,5 +245,33 @@ class TrafficDataSourceTest {
 
         val expected = rx.get()
         assertThat(dataSource.consumeDelta().rxBytes).isEqualTo(expected)
+    }
+
+    @Test
+    fun sample_withTetheredInterface_tracksHotspotDeltaAndAdjustsUpload() {
+        val fake = FakeTrafficStatsProvider(rx = 1000L, tx = 1000L, timeMs = 1000L, ifaceRx = 100L, ifaceTx = 200L)
+        val dataSource = TrafficDataSource(
+            trafficStatsProvider = fake,
+            tetheredInterfacesProvider = { listOf("swlan0") }
+        )
+        dataSource.sample()
+
+        // 1 second later:
+        // Downlink internet: 5000 bytes rx
+        // SoftAP forwarded to client: 5000 bytes tx on swlan0
+        fake.rx = 6000L
+        fake.tx = 6000L
+        fake.ifaceRx = 100L // client uploaded 0
+        fake.ifaceTx = 5200L // client downloaded 5000 bytes
+        fake.timeMs = 2000L
+
+        val snapshot = dataSource.sample()
+        // Download is 5000 bytes/s
+        assertThat(snapshot.downloadBytesPerSec).isEqualTo(5000L)
+        // Upload was forwarded to client, so phone uplink upload is adjusted to 0
+        assertThat(snapshot.uploadBytesPerSec).isEqualTo(0L)
+
+        val delta = dataSource.consumeDelta()
+        assertThat(delta.hotspotBytes).isEqualTo(5000L)
     }
 }
